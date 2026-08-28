@@ -78,8 +78,8 @@ func Parse(filename string) Result {
 		series = base[:volumeStart]
 	}
 	series = cleanupSeries(series)
-	result.Series = SafeFolderName(series)
-	if result.Series != "" {
+	if series != "" {
+		result.Series = SafeFolderName(series)
 		result.Confidence += 0.10
 		result.Reasons = append(result.Reasons, "non-empty-series")
 	} else {

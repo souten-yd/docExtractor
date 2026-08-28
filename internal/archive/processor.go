@@ -33,9 +33,10 @@ const (
 var ErrCrossDeviceRename = errors.New("cross-device rename is disabled to avoid an implicit full-file rewrite")
 
 type Config struct {
-	BufferSize  int
-	Compression CompressionMode
-	Verify      VerifyMode
+	BufferSize        int
+	MaxDictionarySize int64
+	Compression       CompressionMode
+	Verify            VerifyMode
 }
 
 type Processor struct {
@@ -77,6 +78,12 @@ func New(cfg Config) *Processor {
 	}
 	if cfg.BufferSize > 64*1024*1024 {
 		cfg.BufferSize = 64 * 1024 * 1024
+	}
+	if cfg.MaxDictionarySize <= 0 {
+		cfg.MaxDictionarySize = 512 * 1024 * 1024
+	}
+	if cfg.MaxDictionarySize > 2*1024*1024*1024 {
+		cfg.MaxDictionarySize = 2 * 1024 * 1024 * 1024
 	}
 	if cfg.Compression == "" {
 		cfg.Compression = CompressionBalanced
@@ -152,6 +159,9 @@ func (p *Processor) convertRAR(ctx context.Context, src, dst string, deleteSourc
 	if err != nil {
 		return Result{}, err
 	}
+	if err := ensureFreeSpace(filepath.Dir(dst), estimatedOutputBytes(info, st.Size())); err != nil {
+		return Result{}, err
+	}
 	if info.SingleNestedZIP {
 		result, err := p.extractNestedZIP(ctx, src, dst, info, report)
 		if err != nil {
@@ -192,7 +202,7 @@ func (p *Processor) convertRAR(ctx context.Context, src, dst string, deleteSourc
 		})
 	}
 
-	rr, err := rardecode.OpenReader(src, rardecode.BufferSize(p.cfg.BufferSize))
+	rr, err := rardecode.OpenReader(src, rardecode.BufferSize(p.cfg.BufferSize), rardecode.MaxDictionarySize(p.cfg.MaxDictionarySize))
 	if err != nil {
 		return Result{}, err
 	}
@@ -303,7 +313,7 @@ func (p *Processor) extractNestedZIP(ctx context.Context, src, dst string, info 
 		}
 	}()
 
-	rr, err := rardecode.OpenReader(src, rardecode.BufferSize(p.cfg.BufferSize))
+	rr, err := rardecode.OpenReader(src, rardecode.BufferSize(p.cfg.BufferSize), rardecode.MaxDictionarySize(p.cfg.MaxDictionarySize))
 	if err != nil {
 		return Result{}, err
 	}
@@ -393,6 +403,39 @@ func InspectRAR(filename string) (RARInfo, error) {
 		info.NestedZIPName = names[0]
 	}
 	return info, nil
+}
+
+func estimatedOutputBytes(info RARInfo, sourceBytes int64) int64 {
+	base := info.UnpackedBytes
+	if base <= 0 {
+		base = sourceBytes * 2
+	}
+	if info.SingleNestedZIP && info.UnpackedBytes > 0 {
+		base = info.UnpackedBytes
+	}
+	safety := int64(256 * 1024 * 1024)
+	if pct := base / 20; pct > safety {
+		safety = pct
+	}
+	if base > (1<<63-1)-safety {
+		return 1<<63 - 1
+	}
+	return base + safety
+}
+
+func ensureFreeSpace(dir string, required int64) error {
+	if required <= 0 {
+		return nil
+	}
+	var fs syscall.Statfs_t
+	if err := syscall.Statfs(dir, &fs); err != nil {
+		return fmt.Errorf("cannot check destination free space: %w", err)
+	}
+	available := int64(fs.Bavail) * int64(fs.Bsize)
+	if available < required {
+		return fmt.Errorf("insufficient free space: need about %d MiB, available %d MiB", required/(1024*1024), available/(1024*1024))
+	}
+	return nil
 }
 
 func VerifyZIP(ctx context.Context, filename string, mode VerifyMode) (int, error) {

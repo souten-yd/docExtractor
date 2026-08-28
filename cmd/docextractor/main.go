@@ -28,6 +28,7 @@ func main() {
 		dataDir     = flag.String("data-dir", "./var", "application data directory")
 		workers     = flag.Int("workers", 2, "parallel archive workers (1-3)")
 		bufferMiB   = flag.Int("buffer-mib", 8, "stream buffer per worker in MiB")
+		maxDictMiB  = flag.Int64("max-dict-mib", 512, "maximum RAR decode dictionary per worker in MiB")
 		compression = flag.String("compression", "balanced", "fast, balanced, or compact")
 		fullVerify  = flag.Bool("full-verify", false, "read every ZIP entry after generation")
 	)
@@ -51,7 +52,8 @@ func main() {
 		verify = archive.VerifyFull
 	}
 	processor := archive.New(archive.Config{
-		BufferSize: *bufferMiB * 1024 * 1024, Compression: archive.CompressionMode(*compression), Verify: verify,
+		BufferSize: *bufferMiB * 1024 * 1024, MaxDictionarySize: *maxDictMiB * 1024 * 1024,
+		Compression: archive.CompressionMode(*compression), Verify: verify,
 	})
 
 	jobManager, err := jobs.New(*workers, 64, makeProcessor(processor, diag))

@@ -22,7 +22,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22.x'
-          cache: true
+          cache: false
+      - run: go mod download
+      - run: go mod verify
       - name: Build static x86_64 binary
         env:
           VERSION: ${{ github.ref_name }}
