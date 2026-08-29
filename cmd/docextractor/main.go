@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/souten-yd/docExtractor/internal/diagnostics"
 	"github.com/souten-yd/docExtractor/internal/jobs"
 	"github.com/souten-yd/docExtractor/internal/organizer"
+	appsettings "github.com/souten-yd/docExtractor/internal/settings"
 	webui "github.com/souten-yd/docExtractor/internal/web"
 )
 
@@ -23,27 +25,47 @@ var version = "dev"
 
 func main() {
 	var (
-		listen      = flag.String("listen", ":8765", "HTTP listen address")
-		root        = flag.String("root", "/share/Download/Temp", "archive inbox/library root")
-		dataDir     = flag.String("data-dir", "./var", "application data directory")
-		workers     = flag.Int("workers", 2, "parallel archive workers (1-3)")
-		bufferMiB   = flag.Int("buffer-mib", 8, "stream buffer per worker in MiB")
-		maxDictMiB  = flag.Int64("max-dict-mib", 512, "maximum RAR decode dictionary per worker in MiB")
-		compression = flag.String("compression", "balanced", "fast, balanced, or compact")
-		fullVerify  = flag.Bool("full-verify", false, "read every ZIP entry after generation")
+		listen       = flag.String("listen", ":8765", "HTTP listen address")
+		root         = flag.String("root", "/share/Download/Temp", "default archive inbox/library root")
+		browseRoot   = flag.String("browse-root", "/share", "root exposed by the Web folder picker")
+		dataDir      = flag.String("data-dir", "./var", "application data directory")
+		settingsFile = flag.String("settings-file", "", "persistent Web settings file (default: <data-dir>/settings.json)")
+		workers      = flag.Int("workers", 2, "parallel archive workers (1-3)")
+		bufferMiB    = flag.Int("buffer-mib", 8, "stream buffer per worker in MiB")
+		maxDictMiB   = flag.Int64("max-dict-mib", 512, "maximum RAR decode dictionary per worker in MiB")
+		compression  = flag.String("compression", "balanced", "fast, balanced, or compact")
+		fullVerify   = flag.Bool("full-verify", false, "read every ZIP entry after generation")
 	)
 	flag.Parse()
 
 	if err := os.MkdirAll(*dataDir, 0o750); err != nil {
 		log.Fatal(err)
 	}
+	settingsPath := strings.TrimSpace(*settingsFile)
+	if settingsPath == "" {
+		settingsPath = filepath.Join(*dataDir, "settings.json")
+	}
+	settingStore, err := appsettings.Open(settingsPath, appsettings.Settings{Root: *root})
+	if err != nil {
+		log.Printf("settings load failed; using default root: %v", err)
+		settingStore = appsettings.New(settingsPath, appsettings.Settings{Root: *root})
+	}
+
 	diag, err := diagnostics.New(diagnostics.Config{
 		RootDir: filepath.Join(*dataDir, "diagnostics"), RetentionDays: 14, PrivacyMode: true,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	org, err := organizer.New(organizer.Config{Root: *root, ConfidenceThreshold: 0.72})
+	effectiveRoot := settingStore.Get().Root
+	org, err := organizer.New(organizer.Config{Root: effectiveRoot, ConfidenceThreshold: 0.72})
+	if err != nil && filepath.Clean(effectiveRoot) != filepath.Clean(*root) {
+		log.Printf("saved root unavailable (%s); falling back to default: %v", effectiveRoot, err)
+		org, err = organizer.New(organizer.Config{Root: *root, ConfidenceThreshold: 0.72})
+		if err == nil {
+			settingStore = appsettings.New(settingsPath, appsettings.Settings{Root: org.Root()})
+		}
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -78,7 +100,10 @@ func main() {
 	}
 	defer jobManager.Close()
 
-	handler := (&webui.Server{Organizer: org, Jobs: jobManager, Diagnostics: diag, Version: version}).Handler()
+	handler := (&webui.Server{
+		Organizer: org, Jobs: jobManager, Diagnostics: diag, Settings: settingStore,
+		BrowseRoot: *browseRoot, Version: version,
+	}).Handler()
 	httpServer := &http.Server{
 		Addr: *listen, Handler: handler,
 		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second,
@@ -115,7 +140,6 @@ func makeProcessor(p *archive.Processor, dm *diagnostics.Manager) jobs.Processor
 			if logger == nil {
 				return
 			}
-			// Log stage transitions and roughly every 256 MiB only. This keeps debug value without turning logs into write amplification.
 			logMu.Lock()
 			defer logMu.Unlock()
 			maxBytes := pg.BytesRead

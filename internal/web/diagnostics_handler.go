@@ -19,7 +19,7 @@ import (
 type DiagnosticsHandler struct {
 	Manager     *diagnostics.Manager
 	Version     string
-	ArchiveRoot string
+	ArchiveRoot func() string
 	Workers     int
 }
 
@@ -86,13 +86,16 @@ func (h DiagnosticsHandler) downloadBundle(w http.ResponseWriter, r *http.Reques
 	if qts := readQTSInfo(); len(qts) > 0 {
 		snapshot["qts"] = qts
 	}
-	if disk := diskSnapshot(h.ArchiveRoot); len(disk) > 0 {
+	root := ""
+	if h.ArchiveRoot != nil {
+		root = h.ArchiveRoot()
+	}
+	if disk := diskSnapshot(root); len(disk) > 0 {
 		snapshot["archive_storage"] = disk
 	}
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", `attachment; filename="docExtractor-diagnostics.zip"`)
 	if err := h.Manager.WriteBundle(w, jobID, snapshot); err != nil {
-		// Headers may already be sent; avoid leaking filesystem details.
 		return
 	}
 }

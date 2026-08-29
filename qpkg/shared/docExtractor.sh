@@ -10,6 +10,8 @@ CONF="$QPKG_ROOT/docExtractor.conf"
 
 LISTEN="127.0.0.1:8765"
 ROOT="/share/Download/Temp"
+BROWSE_ROOT="/share"
+SETTINGS_FILE="/etc/config/docExtractor.settings.json"
 WORKERS="2"
 BUFFER_MIB="8"
 MAX_DICT_MIB="512"
@@ -61,7 +63,8 @@ start() {
 
   VERIFY_ARG=""
   [ "$FULL_VERIFY" = "1" ] && VERIFY_ARG="--full-verify"
-  "$BIN" --listen "$LISTEN" --root "$ROOT" --data-dir "$VAR" \
+  "$BIN" --listen "$LISTEN" --root "$ROOT" --browse-root "$BROWSE_ROOT" \
+    --settings-file "$SETTINGS_FILE" --data-dir "$VAR" \
     --workers "$WORKERS" --buffer-mib "$BUFFER_MIB" --max-dict-mib "$MAX_DICT_MIB" --compression "$COMPRESSION" \
     $VERIFY_ARG >>"$LOGFILE" 2>&1 &
   PID=$!
