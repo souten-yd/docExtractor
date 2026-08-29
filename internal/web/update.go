@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 )
@@ -59,7 +60,7 @@ func (s *Server) installUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusAccepted)
-	writeJSONBody(w, s.Updater.Status())
+	_ = json.NewEncoder(w).Encode(s.Updater.Status())
 }
 
 func (s *Server) updateLog(w http.ResponseWriter, r *http.Request) {
@@ -75,11 +76,4 @@ func (s *Server) updateLog(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write(raw)
-}
-
-func writeJSONBody(w http.ResponseWriter, v any) {
-	// writeJSON sets headers as well, but installUpdate has already sent a 202.
-	// Keep this helper small so the status body can still be emitted correctly.
-	enc := jsonEncoder(w)
-	_ = enc.Encode(v)
 }
