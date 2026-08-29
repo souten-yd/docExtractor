@@ -31,7 +31,7 @@ func TestReconcileUsesArchiveFilenameOnlyEvenWhenZIPIsInvalid(t *testing.T) {
 		t.Fatalf("items=%d report=%+v", len(report.Items), report.Summary)
 	}
 	it := report.Items[0]
-	if it.Series != "DEAD Tube -デッドチューブ-" {
+	if it.Series != "DEAD Tube -デッドチューブ" {
 		t.Fatalf("series=%q; bad parent bucket must not win", it.Series)
 	}
 	if !it.HasVolume || it.Volume != 5 {
@@ -40,7 +40,7 @@ func TestReconcileUsesArchiveFilenameOnlyEvenWhenZIPIsInvalid(t *testing.T) {
 	if it.Action != "move" {
 		t.Fatalf("action=%q reason=%q", it.Action, it.Reason)
 	}
-	want := filepath.Join(root, "DEAD Tube -デッドチューブ-", name)
+	want := filepath.Join(root, "DEAD Tube -デッドチューブ", name)
 	if filepath.Clean(it.Destination) != filepath.Clean(want) {
 		t.Fatalf("destination=%q want=%q", it.Destination, want)
 	}
