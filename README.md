@@ -37,8 +37,26 @@ Web UI から以下を実行できます。
 - 実行中ジョブのキャンセル
 - ジョブログの画面表示 / JSONL ダウンロード
 - ジョブ単位または全体の診断 ZIP ダウンロード
+- GitHub Releases の最新版確認と Web からの QPKG 更新
+- 更新パッケージのダウンロード進捗、検証状態、更新ログの確認
 
 保存した対象フォルダは即時反映され、QPKG 再起動・アップデート後も `/etc/config/docExtractor.settings.json` から復元されます。Web UI から設定できる範囲は `/share` 配下に制限します。
+
+## Web 更新
+
+**v0.2.0 以降**は画面右上の「更新」から最新版を確認・適用できます。v0.1.x から v0.2.0 への移行だけは App Center から v0.2.0 QPKG を一度手動で上書きインストールしてください。それ以降のリリースは Web 更新を利用できます。
+
+更新処理は次の安全条件を満たした場合だけ実行します。
+
+1. GitHub の `souten-yd/docExtractor` 最新 Release だけを確認
+2. Release バージョンと一致する `docExtractor_<version>_x86_64.qpkg` だけを選択
+3. QPKG サイズを上限 100 MiB に制限し、メモリへ全読み込みせずストリーミング保存
+4. GitHub Release asset が公開する SHA-256 とダウンロード後の SHA-256 を照合
+5. SHA-256 不一致なら QPKG を削除し、インストールを開始しない
+6. 実行中または待機中のアーカイブジョブがある場合は更新を拒否
+7. 検証完了後だけ QPKG インストーラを開始し、Web UI は一時切断後の再接続を自動試行
+
+更新失敗時は「更新ログ」からインストーラ出力を確認できます。Web 更新は `X-docExtractor-Confirm` を使った同一オリジンの明示操作を要求し、通常のフォーム送信だけでは開始できません。
 
 ## 速度計測 / ログ / デバッグ
 
@@ -49,6 +67,16 @@ Web UI から以下を実行できます。
 診断 ZIP にはアーカイブ本体や画像を入れません。安全な範囲で、直近ジョブログ、docExtractor/Go/OS 情報、QTS 情報、メモリ情報、対象ストレージ空き容量などを格納します。パスは basename 化し、token/password/secret 系フィールドはマスクします。ジョブログの標準保持期間は 14 日です。
 
 実機の並列数を決める際は、同じデータセットで worker=1 と worker=2 を比較し、Web UI の完了ジョブ平均 I/O と NAS load を確認してください。TS-253Be では 16 GB RAM より J3455 CPU / ストレージ I/O が先に上限になる想定です。
+
+## QNAP アイコン
+
+QPKG には QTS / App Center 用の専用アイコンを同梱します。
+
+- `qpkg/icons/docExtractor.png`: 64×64
+- `qpkg/icons/docExtractor_80.png`: 80×80
+- `qpkg/icons/docExtractor_gray.png`: 無効状態用 64×64
+
+小さい表示でも識別しやすい、アーカイブ／取り込みを表すシンプルなデザインです。
 
 ## QPKG 設定
 
