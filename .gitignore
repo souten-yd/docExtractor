@@ -1,0 +1,5 @@
+/dist/
+/var/
+/qpkg/build/
+/qpkg/x86_64/docExtractor
+*.partial

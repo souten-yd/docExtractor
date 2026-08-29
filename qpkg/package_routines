@@ -1,0 +1,4 @@
+#!/bin/sh
+# docExtractor currently needs no custom install/remove hooks.
+# Keep this file present because QDK expects package_routines in the build root.
+# Upgrade-safe handling of docExtractor.conf is provided by QPKG_CONFIG.
