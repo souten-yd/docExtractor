@@ -92,6 +92,13 @@ func main() {
 				"invalid_kept": recovery.InvalidKept, "errors": recovery.Errors,
 			},
 		})
+		_ = systemLog.Write(diagnostics.Event{
+			Component: "startup", Stage: "runtime-config", Message: "runtime performance configuration",
+			Fields: map[string]any{
+				"workers": *workers, "buffer_mib_per_worker": *bufferMiB, "max_rar_dictionary_mib_per_worker": *maxDictMiB,
+				"compression": *compression, "verify": string(verify),
+			},
+		})
 	}
 
 	jobManager, err := jobs.New(*workers, 64, makeProcessor(processor, diag))
@@ -134,6 +141,9 @@ func makeProcessor(p *archive.Processor, dm *diagnostics.Manager) jobs.Processor
 		}
 		var logMu sync.Mutex
 		lastStage := ""
+		stageStarted := start
+		var stageRead int64
+		var stageWritten int64
 		var lastLoggedBytes int64
 		result, err := p.Process(ctx, archive.Task{Source: task.Source, Destination: task.Destination, DeleteSource: task.DeleteSource}, func(pg archive.Progress) {
 			update(jobs.Update{Stage: pg.Stage, Progress: pg.Progress, BytesRead: pg.BytesRead, BytesWritten: pg.BytesWritten})
@@ -142,18 +152,58 @@ func makeProcessor(p *archive.Processor, dm *diagnostics.Manager) jobs.Processor
 			}
 			logMu.Lock()
 			defer logMu.Unlock()
+			now := time.Now()
+			stageChanged := pg.Stage != "" && pg.Stage != lastStage
+			if stageChanged {
+				if lastStage != "" && lastStage != "done" {
+					writeStageMetric(logger, lastStage, now.Sub(stageStarted), pg.BytesRead-stageRead, pg.BytesWritten-stageWritten)
+				}
+				lastStage = pg.Stage
+				stageStarted = now
+				stageRead = pg.BytesRead
+				stageWritten = pg.BytesWritten
+			}
 			maxBytes := pg.BytesRead
 			if pg.BytesWritten > maxBytes {
 				maxBytes = pg.BytesWritten
 			}
-			if pg.Stage != lastStage || maxBytes-lastLoggedBytes >= 256*1024*1024 {
-				lastStage = pg.Stage
+			if stageChanged || maxBytes-lastLoggedBytes >= 256*1024*1024 {
 				lastLoggedBytes = maxBytes
-				_ = logger.Write(diagnostics.Event{Component: "worker", Stage: pg.Stage, Message: "progress", BytesRead: pg.BytesRead, BytesWritten: pg.BytesWritten})
+				elapsed := time.Since(start)
+				_ = logger.Write(diagnostics.Event{
+					Component: "worker", Stage: pg.Stage, Message: "progress", BytesRead: pg.BytesRead, BytesWritten: pg.BytesWritten,
+					Fields: map[string]any{
+						"elapsed_ms": elapsed.Milliseconds(),
+						"io_mib_per_sec": throughputMiB(pg.BytesRead+pg.BytesWritten, elapsed),
+					},
+				})
 			}
 		})
 		if logger != nil {
-			event := diagnostics.Event{Component: "worker", Stage: "done", Message: "job completed", DurationMS: time.Since(start).Milliseconds(), BytesRead: result.BytesRead, BytesWritten: result.BytesWritten, Fields: map[string]any{"operation": result.Operation, "entries": result.Entries}}
+			logMu.Lock()
+			if lastStage != "" && lastStage != "done" {
+				writeStageMetric(logger, lastStage, time.Since(stageStarted), result.BytesRead-stageRead, result.BytesWritten-stageWritten)
+			}
+			logMu.Unlock()
+		}
+		duration := time.Since(start)
+		finalUpdate := jobs.Update{BytesRead: result.BytesRead, BytesWritten: result.BytesWritten, Operation: result.Operation, Entries: result.Entries}
+		if err == nil {
+			finalUpdate.Stage = "done"
+			finalUpdate.Progress = 1
+		}
+		update(finalUpdate)
+		if logger != nil {
+			event := diagnostics.Event{
+				Component: "worker", Stage: "done", Message: "job completed", DurationMS: duration.Milliseconds(),
+				BytesRead: result.BytesRead, BytesWritten: result.BytesWritten,
+				Fields: map[string]any{
+					"operation": result.Operation, "entries": result.Entries,
+					"read_mib_per_sec": throughputMiB(result.BytesRead, duration),
+					"write_mib_per_sec": throughputMiB(result.BytesWritten, duration),
+					"io_mib_per_sec": throughputMiB(result.BytesRead+result.BytesWritten, duration),
+				},
+			}
 			if err != nil {
 				event.Level = "error"
 				event.Stage = "failed"
@@ -164,6 +214,31 @@ func makeProcessor(p *archive.Processor, dm *diagnostics.Manager) jobs.Processor
 		}
 		return err
 	}
+}
+
+func writeStageMetric(logger *diagnostics.JobLogger, stage string, duration time.Duration, bytesRead, bytesWritten int64) {
+	if bytesRead < 0 {
+		bytesRead = 0
+	}
+	if bytesWritten < 0 {
+		bytesWritten = 0
+	}
+	_ = logger.Write(diagnostics.Event{
+		Component: "worker", Stage: stage, Message: "stage completed", DurationMS: duration.Milliseconds(),
+		BytesRead: bytesRead, BytesWritten: bytesWritten,
+		Fields: map[string]any{
+			"read_mib_per_sec": throughputMiB(bytesRead, duration),
+			"write_mib_per_sec": throughputMiB(bytesWritten, duration),
+			"io_mib_per_sec": throughputMiB(bytesRead+bytesWritten, duration),
+		},
+	})
+}
+
+func throughputMiB(bytes int64, d time.Duration) float64 {
+	if bytes <= 0 || d <= 0 {
+		return 0
+	}
+	return (float64(bytes) / (1024 * 1024)) / d.Seconds()
 }
 
 func cleanupLoop(ctx context.Context, dm *diagnostics.Manager) {

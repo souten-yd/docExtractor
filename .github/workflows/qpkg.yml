@@ -5,6 +5,8 @@ on:
   pull_request:
     types: [edited]
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -17,7 +19,11 @@ permissions:
 
 jobs:
   build:
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.body, '[qpkg-build]')
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.body, '[qpkg-build]')) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release]'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -28,18 +34,43 @@ jobs:
           cache: false
       - run: go mod download
       - run: go mod verify
+      - name: Resolve package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+            PACKAGE_VERSION="${GITHUB_REF_NAME#v}"
+            VERSION="${RELEASE_TAG}"
+            IS_RELEASE=true
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            PACKAGE_VERSION="$(sed -n 's/^QPKG_VER="\([^"]*\)".*/\1/p' qpkg/qpkg.cfg | head -n1)"
+            test -n "${PACKAGE_VERSION}"
+            RELEASE_TAG="v${PACKAGE_VERSION}"
+            VERSION="${RELEASE_TAG}"
+            IS_RELEASE=true
+          elif [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            PACKAGE_VERSION="$(sed -n 's/^QPKG_VER="\([^"]*\)".*/\1/p' qpkg/qpkg.cfg | head -n1)"
+            RELEASE_TAG=""
+            VERSION="pr-${{ github.event.number }}"
+            IS_RELEASE=false
+          else
+            PACKAGE_VERSION="$(sed -n 's/^QPKG_VER="\([^"]*\)".*/\1/p' qpkg/qpkg.cfg | head -n1)"
+            RELEASE_TAG=""
+            VERSION="manual-${GITHUB_RUN_NUMBER}"
+            IS_RELEASE=false
+          fi
+          echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> "${GITHUB_ENV}"
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> "${GITHUB_ENV}"
+          echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
+          echo "IS_RELEASE=${IS_RELEASE}" >> "${GITHUB_ENV}"
       - name: Build static x86_64 binary
-        env:
-          VERSION: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || github.ref_name }}
         run: |
           mkdir -p qpkg/x86_64
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
             -ldflags="-s -w -X main.version=${VERSION}" \
             -o qpkg/x86_64/docExtractor ./cmd/docextractor
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            PACKAGE_VERSION="${GITHUB_REF_NAME#v}"
-            sed -i "s/^QPKG_VER=.*/QPKG_VER=\"${PACKAGE_VERSION}\"/" qpkg/qpkg.cfg
-          fi
+          sed -i "s/^QPKG_VER=.*/QPKG_VER=\"${PACKAGE_VERSION}\"/" qpkg/qpkg.cfg
       - name: Install QDK only for package builds
         run: |
           curl -fsSL -o /tmp/qdk.deb \
@@ -55,15 +86,16 @@ jobs:
           test -n "$QPKG_FILE"
           qbuild --query info "$QPKG_FILE"
           ls -lh "$QPKG_FILE"
-      - name: Publish tagged release without Actions artifact storage
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publish release without duplicate Actions artifact storage
+        if: env.IS_RELEASE == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || gh release create "${GITHUB_REF_NAME}" --generate-notes
-          gh release upload "${GITHUB_REF_NAME}" dist/*.qpkg --clobber
+          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 || \
+            gh release create "${RELEASE_TAG}" --target "${GITHUB_SHA}" --title "docExtractor ${RELEASE_TAG}" --generate-notes
+          gh release upload "${RELEASE_TAG}" dist/*.qpkg --clobber
       - name: Upload non-release build briefly
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
+        if: env.IS_RELEASE != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: docExtractor-qpkg
