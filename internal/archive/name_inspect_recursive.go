@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	maxRecursiveNameDepth       = 8
-	maxRecursiveNameArchives    = 512
-	maxRecursiveNameSpoolBytes  = int64(32 * 1024 * 1024 * 1024)
+	maxRecursiveNameDepth      = 8
+	maxRecursiveNameArchives   = 512
+	maxRecursiveNameSpoolBytes = int64(32 * 1024 * 1024 * 1024)
 )
 
 type recursiveNameState struct {
@@ -33,6 +33,11 @@ type recursiveNameState struct {
 // It recursively opens embedded ZIP/RAR/CBZ/CBR files and collects naming
 // evidence from every reachable level. Only embedded archive payloads are
 // spooled to disk; ordinary image/file bodies are not extracted for inspection.
+//
+// The root archive must be readable. A malformed/unreadable embedded archive is
+// non-fatal for name discovery because its filename is still useful evidence;
+// the actual archive-normalization step remains strict and will refuse to
+// publish an output if that embedded archive cannot be flattened.
 func InspectNamesRecursive(filename string) (NameInspection, error) {
 	tempDir, err := os.MkdirTemp(filepath.Dir(filename), ".docextractor-name-")
 	if err != nil {
@@ -88,23 +93,28 @@ func inspectNamesRecursiveZIP(filename string, depth int, state *recursiveNameSt
 		if f.FileInfo().IsDir() || !isSupportedNestedArchiveName(f.Name) {
 			continue
 		}
+
+		// The member name has already been collected above. Deep inspection is
+		// best-effort for naming only; processing itself validates strictly.
 		rc, err := f.Open()
 		if err != nil {
-			return err
+			state.truncated = true
+			continue
 		}
-		temp, err := spoolRecursiveNameArchive(rc, filepath.Ext(f.Name), state)
+		temp, spoolErr := spoolRecursiveNameArchive(rc, filepath.Ext(f.Name), state)
 		closeErr := rc.Close()
-		if err != nil {
-			return err
-		}
-		if closeErr != nil {
-			_ = os.Remove(temp)
-			return closeErr
+		if spoolErr != nil || closeErr != nil {
+			state.truncated = true
+			if temp != "" {
+				_ = os.Remove(temp)
+			}
+			continue
 		}
 		err = inspectNamesRecursivePath(temp, depth+1, state)
 		_ = os.Remove(temp)
 		if err != nil {
-			return err
+			state.truncated = true
+			continue
 		}
 	}
 	return nil
@@ -137,14 +147,19 @@ func inspectNamesRecursiveRAR(filename string, depth int, state *recursiveNameSt
 		if h.IsDir || !isSupportedNestedArchiveName(h.Name) {
 			continue
 		}
-		temp, err := spoolRecursiveNameArchive(rr, filepath.Ext(h.Name), state)
-		if err != nil {
-			return err
+
+		// rardecode exposes the current member as a stream. If its payload cannot
+		// be recursively inspected, keep the member-name evidence and continue.
+		temp, spoolErr := spoolRecursiveNameArchive(rr, filepath.Ext(h.Name), state)
+		if spoolErr != nil {
+			state.truncated = true
+			continue
 		}
 		err = inspectNamesRecursivePath(temp, depth+1, state)
 		_ = os.Remove(temp)
 		if err != nil {
-			return err
+			state.truncated = true
+			continue
 		}
 	}
 }
