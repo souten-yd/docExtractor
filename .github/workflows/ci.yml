@@ -6,6 +6,7 @@ on:
       - '**/*.go'
       - 'go.mod'
       - 'go.sum'
+      - 'qpkg/qpkg.cfg'
       - '.github/workflows/ci.yml'
   push:
     branches: [main]
@@ -13,6 +14,7 @@ on:
       - '**/*.go'
       - 'go.mod'
       - 'go.sum'
+      - 'qpkg/qpkg.cfg'
       - '.github/workflows/ci.yml'
 
 concurrency:
@@ -34,6 +36,18 @@ jobs:
           cache: false
       - run: go mod download
       - run: go mod verify
+      - name: Validate QPKG WebUI proxy contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          webui="$(sed -n 's/^QPKG_WEBUI="\([^"]*\)".*/\1/p' qpkg/qpkg.cfg | head -n1)"
+          use_proxy="$(sed -n 's/^QPKG_USE_PROXY="\([^"]*\)".*/\1/p' qpkg/qpkg.cfg | head -n1)"
+          proxy_path="$(sed -n 's/^QPKG_PROXY_PATH="\([^"]*\)".*/\1/p' qpkg/qpkg.cfg | head -n1)"
+          test -n "${webui}"
+          if [[ "${use_proxy}" == "1" ]]; then
+            test -n "${proxy_path}"
+            test "${webui}" = "${proxy_path}"
+          fi
       - run: go test ./...
       - run: go vet ./...
       - name: Verify static QNAP binary builds
