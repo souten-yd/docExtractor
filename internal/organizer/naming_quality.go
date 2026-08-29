@@ -8,8 +8,7 @@ import (
 
 // seriesNameUsable rejects strings that are useful as volume/page metadata but
 // unsafe as a library folder name. This is intentionally conservative: a bad
-// candidate is ignored and the archive/file name or parent folder can still be
-// used as evidence.
+// candidate is ignored and the archive/file name can still be used as evidence.
 func seriesNameUsable(s string) bool {
 	s = strings.TrimSpace(s)
 	if s == "" || s == "Unknown" || !utf8.ValidString(s) {
@@ -22,7 +21,9 @@ func seriesNameUsable(s string) bool {
 	}
 	lower := strings.ToLower(s)
 	switch lower {
-	case "manga", "comic", "comics", "book", "books", "image", "images", "page", "pages", "scan", "scans":
+	case "manga", "comic", "comics", "book", "books", "image", "images", "img", "imgs",
+		"page", "pages", "scan", "scans", "screenshot", "screenshots", "preview", "previews", "sample", "samples", "raw", "source",
+		"単ページ", "見開き", "見開きページ", "ページ", "画像", "画像ファイル", "表紙", "カバー", "スクリーンショット":
 		return false
 	}
 	if volumeOrChapterOnly(s) {
