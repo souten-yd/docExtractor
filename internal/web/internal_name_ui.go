@@ -4,7 +4,7 @@ import "strings"
 
 func renderIndexHTML() string {
 	if !strings.Contains(indexHTML, "</body>") { return indexHTML }
-	return strings.Replace(indexHTML, "</body>", internalNameUIScript+outputControlsUIScript+reconcileUIScript+quarantineUIScript+tabsUIScript+"</body>", 1)
+	return strings.Replace(indexHTML, "</body>", internalNameUIScript+outputControlsUIScript+reconcileUIScript+quarantineUIScript+tabsUIScript+reprocessNavigationUIScript+"</body>", 1)
 }
 
 const internalNameUIScript = `<script>
