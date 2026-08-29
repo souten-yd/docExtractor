@@ -18,6 +18,7 @@ import (
 	"github.com/souten-yd/docExtractor/internal/jobs"
 	"github.com/souten-yd/docExtractor/internal/organizer"
 	appsettings "github.com/souten-yd/docExtractor/internal/settings"
+	"github.com/souten-yd/docExtractor/internal/updater"
 	webui "github.com/souten-yd/docExtractor/internal/web"
 )
 
@@ -107,8 +108,14 @@ func main() {
 	}
 	defer jobManager.Close()
 
+	updateManager, updateErr := updater.New(updater.Config{CurrentVersion: version, DataDir: *dataDir})
+	if updateErr != nil {
+		log.Printf("self updater disabled: %v", updateErr)
+		updateManager = nil
+	}
+
 	handler := (&webui.Server{
-		Organizer: org, Jobs: jobManager, Diagnostics: diag, Settings: settingStore,
+		Organizer: org, Jobs: jobManager, Diagnostics: diag, Settings: settingStore, Updater: updateManager,
 		BrowseRoot: *browseRoot, Version: version,
 	}).Handler()
 	httpServer := &http.Server{

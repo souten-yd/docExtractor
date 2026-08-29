@@ -4,17 +4,21 @@ on:
   pull_request:
     paths:
       - '**/*.go'
+      - 'internal/web/static/**'
       - 'go.mod'
       - 'go.sum'
       - 'qpkg/qpkg.cfg'
+      - 'qpkg/icons/**'
       - '.github/workflows/ci.yml'
   push:
     branches: [main]
     paths:
       - '**/*.go'
+      - 'internal/web/static/**'
       - 'go.mod'
       - 'go.sum'
       - 'qpkg/qpkg.cfg'
+      - 'qpkg/icons/**'
       - '.github/workflows/ci.yml'
 
 concurrency:
@@ -48,6 +52,30 @@ jobs:
             test -n "${proxy_path}"
             test "${webui}" = "${proxy_path}"
           fi
+      - name: Validate QNAP icon files
+        run: |
+          python3 - <<'PY'
+          import struct
+          from pathlib import Path
+
+          expected = {
+              Path('qpkg/icons/docExtractor.png'): (64, 64),
+              Path('qpkg/icons/docExtractor_80.png'): (80, 80),
+              Path('qpkg/icons/docExtractor_gray.png'): (64, 64),
+          }
+          for path, size in expected.items():
+              raw = path.read_bytes()
+              if raw[:8] != b'\x89PNG\r\n\x1a\n':
+                  raise SystemExit(f'{path}: not a PNG')
+              dims = struct.unpack('>II', raw[16:24])
+              if dims != size:
+                  raise SystemExit(f'{path}: {dims}, expected {size}')
+              print(f'{path}: {dims[0]}x{dims[1]} OK')
+          PY
+      - name: Validate embedded update UI
+        run: |
+          grep -q 'アプリ更新' internal/web/static/index.html
+          grep -q 'X-docExtractor-Confirm' internal/web/static/index.html
       - run: go test ./...
       - run: go vet ./...
       - name: Verify static QNAP binary builds
