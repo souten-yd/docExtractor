@@ -169,7 +169,7 @@ func (p *Processor) convertRAR(ctx context.Context, src, dst string, deleteSourc
 		}
 		result.BytesRead = st.Size()
 		if deleteSource {
-			if err := os.Remove(src); err != nil {
+			if err := RemoveMultipartRARVolumes(src); err != nil {
 				return result, fmt.Errorf("output complete but source removal failed: %w", err)
 			}
 		}
@@ -290,7 +290,7 @@ func (p *Processor) convertRAR(ctx context.Context, src, dst string, deleteSourc
 	}
 	ok = true
 	if deleteSource {
-		if err := os.Remove(src); err != nil {
+		if err := RemoveMultipartRARVolumes(src); err != nil {
 			return Result{Operation: "rar-to-zip", Entries: entries, BytesRead: st.Size(), BytesWritten: outStat.Size()}, fmt.Errorf("output complete but source removal failed: %w", err)
 		}
 	}
