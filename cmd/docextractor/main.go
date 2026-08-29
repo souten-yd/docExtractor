@@ -56,6 +56,22 @@ func main() {
 		Compression: archive.CompressionMode(*compression), Verify: verify,
 	})
 
+	recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	recovery := archive.RecoverPartials(recoveryCtx, org.Root(), verify)
+	recoveryCancel()
+	if recovery.Found > 0 || recovery.Errors > 0 {
+		log.Printf("partial recovery found=%d promoted=%d removed_stale=%d invalid_kept=%d errors=%d", recovery.Found, recovery.Promoted, recovery.RemovedStale, recovery.InvalidKept, recovery.Errors)
+	}
+	if systemLog, logErr := diag.Job("system"); logErr == nil {
+		_ = systemLog.Write(diagnostics.Event{
+			Component: "startup", Stage: "partial-recovery", Message: "startup recovery completed",
+			Fields: map[string]any{
+				"found": recovery.Found, "promoted": recovery.Promoted, "removed_stale": recovery.RemovedStale,
+				"invalid_kept": recovery.InvalidKept, "errors": recovery.Errors,
+			},
+		})
+	}
+
 	jobManager, err := jobs.New(*workers, 64, makeProcessor(processor, diag))
 	if err != nil {
 		log.Fatal(err)

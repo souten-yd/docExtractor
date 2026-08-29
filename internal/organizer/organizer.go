@@ -45,6 +45,13 @@ func New(cfg Config) (*Organizer, error) {
 		return nil, err
 	}
 	cfg.Root = filepath.Clean(root)
+	st, err := os.Stat(cfg.Root)
+	if err != nil {
+		return nil, fmt.Errorf("root is not accessible: %w", err)
+	}
+	if !st.IsDir() {
+		return nil, errors.New("root is not a directory")
+	}
 	if cfg.ConfidenceThreshold <= 0 {
 		cfg.ConfidenceThreshold = 0.72
 	}
@@ -65,9 +72,6 @@ func (o *Organizer) Scan() ([]Plan, error) {
 		}
 		ext := strings.ToLower(filepath.Ext(entry.Name()))
 		if ext != ".zip" && ext != ".rar" {
-			continue
-		}
-		if strings.HasSuffix(strings.ToLower(entry.Name()), ".partial") {
 			continue
 		}
 		plan, err := o.PlanName(entry.Name())
@@ -93,10 +97,14 @@ func (o *Organizer) PlanName(name string) (Plan, error) {
 	if !o.allowed(source) {
 		return Plan{}, errors.New("source escapes configured root")
 	}
-	if st, err := os.Stat(source); err != nil || st.IsDir() {
-		if err != nil {
-			return Plan{}, err
-		}
+	st, err := os.Lstat(source)
+	if err != nil {
+		return Plan{}, err
+	}
+	if st.Mode()&os.ModeSymlink != 0 {
+		return Plan{}, errors.New("symbolic-link archives are not allowed")
+	}
+	if !st.Mode().IsRegular() {
 		return Plan{}, errors.New("source is not a regular archive")
 	}
 
@@ -117,9 +125,13 @@ func (o *Organizer) PlanName(name string) (Plan, error) {
 			action = "rar-to-zip"
 		}
 	}
-	destination := filepath.Join(o.cfg.Root, parsed.Series, outName)
+	seriesDir := filepath.Join(o.cfg.Root, parsed.Series)
+	if err := o.rejectSymlinkComponents(seriesDir); err != nil {
+		return Plan{}, err
+	}
+	destination := filepath.Join(seriesDir, outName)
 	needsReview := parsed.Confidence < o.cfg.ConfidenceThreshold
-	if _, err := os.Stat(destination); err == nil {
+	if _, err := os.Lstat(destination); err == nil {
 		return Plan{
 			Name: name, Source: source, Destination: destination, Series: parsed.Series,
 			Author: parsed.Author, Volume: parsed.Volume, HasVolume: parsed.HasVolume,
@@ -142,4 +154,35 @@ func (o *Organizer) allowed(filename string) bool {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+func (o *Organizer) rejectSymlinkComponents(target string) error {
+	rel, err := filepath.Rel(o.cfg.Root, filepath.Clean(target))
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return errors.New("destination escapes configured root")
+	}
+	current := o.cfg.Root
+	for _, part := range strings.Split(rel, string(os.PathSeparator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		st, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("destination path contains symbolic link: %s", part)
+		}
+		if !st.IsDir() {
+			return fmt.Errorf("destination path component is not a directory: %s", part)
+		}
+	}
+	return nil
 }
