@@ -4,7 +4,17 @@ import "strings"
 
 func renderIndexHTML() string {
 	if !strings.Contains(indexHTML, "</body>") { return indexHTML }
-	return strings.Replace(indexHTML, "</body>", internalNameUIScript+outputControlsUIScript+reconcileUIScript+quarantineUIScript+tabsUIScript+reprocessNavigationUIScript+archiveScanUIScript+"</body>", 1)
+	html := indexHTML
+	// Injected UI scripts replace loadSettings/scan. Defer init until those
+	// overrides are installed, otherwise the legacy synchronous archive scan
+	// runs before the background-scan UI exists.
+	html = strings.Replace(html, "init().catch(function(e){document.getElementById('status').textContent='Error: '+e.message})", "setTimeout(function(){init().catch(function(e){document.getElementById('status').textContent='Error: '+e.message})},0)", 1)
+	// Opening the Web UI must not start a full recursive archive scan. Likewise,
+	// finishing jobs must not immediately launch another expensive scan. Scans
+	// are explicit; the background status widget resumes an already-running one.
+	html = strings.Replace(html, "await scan();await refreshJobs();", "await refreshJobs();", 1)
+	html = strings.Replace(html, "await refreshJobs();await scan()}", "await refreshJobs()}", 1)
+	return strings.Replace(html, "</body>", internalNameUIScript+outputControlsUIScript+reconcileUIScript+quarantineUIScript+tabsUIScript+reprocessNavigationUIScript+archiveScanUIScript+"</body>", 1)
 }
 
 const internalNameUIScript = `<script>
