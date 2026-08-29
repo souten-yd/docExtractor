@@ -1,6 +1,7 @@
 package web
 
 import (
+	_ "embed"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -12,13 +13,18 @@ import (
 	"github.com/souten-yd/docExtractor/internal/jobs"
 	"github.com/souten-yd/docExtractor/internal/organizer"
 	appsettings "github.com/souten-yd/docExtractor/internal/settings"
+	"github.com/souten-yd/docExtractor/internal/updater"
 )
+
+//go:embed static/index.html
+var indexHTML string
 
 type Server struct {
 	Organizer   *organizer.Organizer
 	Jobs        *jobs.Manager
 	Diagnostics *diagnostics.Manager
 	Settings    *appsettings.Store
+	Updater     *updater.Manager
 	BrowseRoot  string
 	Version     string
 }
@@ -40,12 +46,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/jobs/{jobID}", s.getJob)
 	mux.HandleFunc("POST /api/jobs", s.submitJobs)
 	mux.HandleFunc("POST /api/jobs/{jobID}/cancel", s.cancelJob)
+	s.registerUpdateRoutes(mux)
 	DiagnosticsHandler{
 		Manager: s.Diagnostics, Version: s.Version,
 		ArchiveRoot: s.Organizer.Root, Workers: s.Jobs.Workers(),
 	}.Register(mux)
 
-	// QTS can expose the app through QPKG_PROXY_PATH=/docExtractor. Some QTS
+	// QTS exposes the app through QPKG_PROXY_PATH=/docExtractor. Some QTS
 	// versions strip the prefix before proxying and some integrations may not,
 	// so accept both forms without changing the API implementation.
 	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -76,10 +83,10 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	status := map[string]any{
 		"version": s.Version,
-		"root": s.Organizer.Root(),
+		"root":    s.Organizer.Root(),
 		"workers": s.Jobs.Workers(),
-		"jobs": s.Jobs.Summary(),
-		"cpus": runtime.NumCPU(),
+		"jobs":    s.Jobs.Summary(),
+		"cpus":    runtime.NumCPU(),
 	}
 	for k, v := range lightweightSystemMetrics() {
 		status[k] = v
@@ -189,43 +196,3 @@ func securityHeaders(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-
-const indexHTML = `<!doctype html>
-<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>docExtractor</title>
-<style>
-body{font-family:system-ui,sans-serif;margin:0;background:#f5f6f8;color:#20242a}.wrap{max-width:1220px;margin:auto;padding:20px}header{display:flex;align-items:center;justify-content:space-between;gap:12px}.card{background:#fff;border:1px solid #dfe3e8;border-radius:10px;padding:16px;margin:14px 0}button{padding:9px 14px;border:1px solid #aeb6c1;border-radius:7px;background:#fff;cursor:pointer}.primary{background:#20242a;color:#fff}input[type=text]{min-width:280px;flex:1;padding:9px 10px;border:1px solid #aeb6c1;border-radius:7px;font:inherit}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:8px;border-bottom:1px solid #e8ebef;vertical-align:top}.warn{color:#a15c00}.bad{color:#b42318}.ok{color:#087443}.muted{color:#69717d;font-size:13px}.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.scroll{overflow:auto}.pill{display:inline-block;padding:2px 7px;border-radius:12px;background:#eef1f4}.state-running{background:#e7f0ff}.state-succeeded{background:#e8f7ef}.state-failed{background:#fdeceb}.state-queued{background:#f1f2f4}pre{white-space:pre-wrap;word-break:break-word;background:#111820;color:#e8eef5;padding:12px;border-radius:8px;max-height:420px;overflow:auto;font-size:12px}.hidden{display:none}a{color:#225ea8}.browser{margin-top:12px;border:1px solid #e0e4e8;border-radius:8px;padding:10px}.browser-list{display:flex;flex-direction:column;gap:4px;max-height:280px;overflow:auto;margin-top:8px}.browser-list button{text-align:left;width:100%}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin:14px 0}.metric{background:#fff;border:1px solid #dfe3e8;border-radius:10px;padding:12px}.metric .value{font-size:22px;font-weight:700;margin-top:4px}.metric .label{font-size:12px;color:#69717d}.speed{font-variant-numeric:tabular-nums;font-weight:600}.errorline{margin-top:4px;color:#b42318;font-size:12px}@media(max-width:700px){.wrap{padding:12px}th,td{padding:7px 6px}.desktop-extra{display:none}}
-</style></head>
-<body><div class="wrap"><header><div><h1>docExtractor</h1><div id="status" class="muted">loading...</div></div><button onclick="downloadDiag()">診断ZIP</button></header>
-<div class="metrics"><div class="metric"><div class="label">実行中 / 待機</div><div id="mActive" class="value">-</div></div><div class="metric"><div class="label">成功 / 失敗</div><div id="mDone" class="value">-</div></div><div class="metric"><div class="label">現在の実効I/O</div><div id="mActiveSpeed" class="value speed">-</div></div><div class="metric"><div class="label">完了ジョブ平均I/O</div><div id="mAvgSpeed" class="value speed">-</div></div><div class="metric"><div class="label">NAS load (1m / CPU)</div><div id="mLoad" class="value">-</div></div><div class="metric"><div class="label">空きRAM</div><div id="mMem" class="value">-</div></div></div>
-<section class="card"><strong>設定</strong><p class="muted">処理対象フォルダを保存します。QPKG再起動・アップデート後も維持されます。</p><div class="actions"><input id="rootInput" type="text" placeholder="/share/Download/Temp"><button class="primary" onclick="saveSettings()">保存</button><button onclick="openBrowser()">フォルダ選択</button></div><div id="settingsMsg" class="muted"></div><div id="browser" class="browser hidden"><div class="actions"><button id="browserUp" onclick="browseUp()">上へ</button><button onclick="chooseCurrent()">このフォルダを選択</button><button onclick="closeBrowser()">閉じる</button><span id="browserPath" class="muted"></span></div><div id="browserList" class="browser-list"></div></div></section>
-<section class="card"><div class="actions"><button class="primary" onclick="scan()">スキャン</button><button onclick="runSelected(false)">安全な選択を実行</button><button onclick="runSelected(true)">確認対象も実行</button></div><p class="muted">ZIPは再圧縮せずrenameのみ。RARは中間展開せずストリーム変換します。</p><div class="scroll"><table><thead><tr><th></th><th>ファイル</th><th>シリーズ</th><th>巻</th><th>判定</th><th>処理</th></tr></thead><tbody id="plans"></tbody></table></div></section>
-<section class="card"><div class="actions"><button onclick="refreshJobs()">ジョブ更新</button><span class="muted">速度はジョブ開始からの平均です。rename-only ZIPは再書込みしないため速度集計から除外します。</span></div><div class="scroll"><table><thead><tr><th>状態</th><th>ファイル</th><th>Stage</th><th>進捗</th><th>時間 / Worker</th><th>速度</th><th class="desktop-extra">Read / Write</th><th>デバッグ</th></tr></thead><tbody id="jobs"></tbody></table></div></section>
-<section id="logcard" class="card hidden"><div class="actions"><strong id="logtitle">ログ</strong><button onclick="closeLog()">閉じる</button></div><pre id="logview"></pre></section></div>
-<script>
-var APP_BASE=(location.pathname==='/'?'/':(location.pathname.endsWith('/')?location.pathname:location.pathname+'/'));var browserPath='';var browserParent='';
-function appURL(p){return APP_BASE+String(p||'').replace(/^\/+/, '')}
-function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
-function mb(n){return (Number(n||0)/1048576).toFixed(1)+' MB'}
-function gib(n){return (Number(n||0)/1073741824).toFixed(1)+' GiB'}
-function rate(n){n=Number(n||0);return n>0?n.toFixed(1)+' MiB/s':'-'}
-function dur(ms){ms=Number(ms||0);if(ms<=0)return '-';var s=ms/1000;if(s<60)return s.toFixed(1)+'s';var m=Math.floor(s/60);return m+'m '+Math.round(s-m*60)+'s'}
-async function api(path,opt){var r=await fetch(appURL(path),opt||{});if(!r.ok)throw new Error((await r.text()).trim());return r.status===204?null:r.json()}
-function renderStatus(s){document.getElementById('status').textContent=s.root+' / workers='+s.workers+' / '+s.version;var j=s.jobs||{};document.getElementById('mActive').textContent=(j.running||0)+' / '+(j.queued||0);document.getElementById('mDone').textContent=(j.succeeded||0)+' / '+(j.failed||0);document.getElementById('mActiveSpeed').textContent=rate(j.active_io_mib_per_sec);document.getElementById('mAvgSpeed').textContent=rate(j.completed_io_mib_per_sec);document.getElementById('mLoad').textContent=(s.load_1m==null?'-':Number(s.load_1m).toFixed(2))+' / '+(s.cpus||'-');document.getElementById('mMem').textContent=s.mem_available_bytes?gib(s.mem_available_bytes):'-'}
-async function refreshStatus(){renderStatus(await api('api/status'))}
-async function loadSettings(){var s=await api('api/settings');document.getElementById('rootInput').value=s.root||''}
-async function saveSettings(){var msg=document.getElementById('settingsMsg');msg.className='muted';msg.textContent='保存中...';try{var saved=await api('api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({root:document.getElementById('rootInput').value})});document.getElementById('rootInput').value=saved.root;msg.className='ok';msg.textContent='保存しました';await refreshStatus();await scan()}catch(e){msg.className='bad';msg.textContent='保存失敗: '+e.message}}
-async function openBrowser(){document.getElementById('browser').classList.remove('hidden');var p=document.getElementById('rootInput').value;try{await browse(p)}catch(e){await browse('')}}
-async function browse(p){var d=await api('api/directories'+(p?'?path='+encodeURIComponent(p):''));browserPath=d.path;browserParent=d.parent||'';document.getElementById('browserPath').textContent=d.path;document.getElementById('browserUp').disabled=!browserParent;var list=document.getElementById('browserList');list.innerHTML='';if(!d.entries.length){var empty=document.createElement('span');empty.className='muted';empty.textContent='サブフォルダなし';list.appendChild(empty);return}d.entries.forEach(function(e){var b=document.createElement('button');b.textContent='📁 '+e.name;b.onclick=function(){browse(e.path)};list.appendChild(b)})}
-function browseUp(){if(browserParent)browse(browserParent)}
-function chooseCurrent(){if(browserPath)document.getElementById('rootInput').value=browserPath;closeBrowser()}
-function closeBrowser(){document.getElementById('browser').classList.add('hidden')}
-async function init(){await Promise.all([refreshStatus(),loadSettings()]);await scan();await refreshJobs()}
-async function scan(){var ps=await api('api/scan',{method:'POST'});var h='';ps.forEach(function(p){h+='<tr><td><input type="checkbox" data-name="'+esc(p.name)+'" '+(!p.needs_review&&!p.error?'checked':'')+' '+(p.error?'disabled':'')+'></td><td>'+esc(p.name)+(p.error?'<div class="bad">'+esc(p.error)+'</div>':'')+'</td><td>'+esc(p.series||'-')+'</td><td>'+(p.has_volume?esc(p.volume):'-')+'</td><td class="'+(p.needs_review?'warn':'ok')+'">'+Math.round((p.confidence||0)*100)+'% '+(p.needs_review?'確認':'OK')+'</td><td><span class="pill">'+esc(p.action||'-')+'</span></td></tr>'});document.getElementById('plans').innerHTML=h}
-async function runSelected(allow){var names=Array.from(document.querySelectorAll('#plans input:checked')).map(function(x){return x.dataset.name});if(!names.length)return;await api('api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({names:names,allow_review:allow})});await refreshJobs();await scan()}
-async function refreshJobs(){var pair=await Promise.all([api('api/jobs'),api('api/status')]);var js=pair[0];renderStatus(pair[1]);var h='';js.forEach(function(j){var name=(j.task.source||'').split('/').pop();var id=encodeURIComponent(j.id);var stateClass='state-'+esc(j.state);var speed=j.operation==='rename-zip'?'<span class="muted">renameのみ</span>':'<span class="speed">'+rate(j.io_mib_per_sec)+'</span><div class="muted">R '+rate(j.read_mib_per_sec)+' / W '+rate(j.write_mib_per_sec)+'</div>';var timing=dur(j.duration_ms)+'<div class="muted">W'+(j.worker||'-')+(j.queue_wait_ms?(' / 待ち '+dur(j.queue_wait_ms)):'')+'</div>';var op=j.operation?'<div class="muted">'+esc(j.operation)+(j.entries?(' / '+j.entries+' entries'):'')+'</div>':'';var err=j.error?'<div class="errorline">'+esc(j.error)+'</div>':'';h+='<tr><td><span class="pill '+stateClass+'">'+esc(j.state)+'</span></td><td>'+esc(name)+op+err+'</td><td>'+esc(j.stage||'-')+'</td><td>'+Math.round((j.progress||0)*100)+'%</td><td>'+timing+'</td><td>'+speed+'</td><td class="desktop-extra">'+mb(j.bytes_read)+' / '+mb(j.bytes_written)+'</td><td><button onclick="showLog(\''+esc(j.id)+'\')">表示</button> · <a href="'+esc(appURL('api/logs/jobs/'+id+'/download'))+'">log</a> · <a href="'+esc(appURL('api/diagnostics/download?job_id='+id))+'">diag</a>'+(j.state==='running'?' · <button onclick="cancelJob(\''+esc(j.id)+'\')">cancel</button>':'')+'</td></tr>'});document.getElementById('jobs').innerHTML=h;if(js.some(function(j){return j.state==='running'||j.state==='queued'}))setTimeout(refreshJobs,3000)}
-async function showLog(id){var es=await api('api/logs/jobs/'+encodeURIComponent(id));var lines=es.map(function(e){var f=e.fields||{};return [e.time||'',String(e.level||'info').toUpperCase(),e.stage||'',e.message||'',e.duration_ms?('time='+dur(e.duration_ms)):'',e.bytes_read?('read='+mb(e.bytes_read)):'',e.bytes_written?('write='+mb(e.bytes_written)):'',f.io_mib_per_sec?('I/O='+rate(f.io_mib_per_sec)):'',f.operation?('op='+f.operation):'',e.error||''].filter(Boolean).join('  ')});document.getElementById('logtitle').textContent='ログ: '+id;document.getElementById('logview').textContent=lines.join('\n');document.getElementById('logcard').classList.remove('hidden');document.getElementById('logcard').scrollIntoView({behavior:'smooth',block:'start'})}
-function closeLog(){document.getElementById('logcard').classList.add('hidden')}
-async function cancelJob(id){await api('api/jobs/'+encodeURIComponent(id)+'/cancel',{method:'POST'});await refreshJobs()}
-function downloadDiag(){location.href=appURL('api/diagnostics/download')}
-init().catch(function(e){document.getElementById('status').textContent='Error: '+e.message})
-</script></body></html>`
