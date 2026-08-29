@@ -4,7 +4,7 @@ import "strings"
 
 func renderIndexHTML() string {
 	if !strings.Contains(indexHTML, "</body>") { return indexHTML }
-	return strings.Replace(indexHTML, "</body>", internalNameUIScript+"</body>", 1)
+	return strings.Replace(indexHTML, "</body>", internalNameUIScript+outputControlsUIScript+"</body>", 1)
 }
 
 const internalNameUIScript = `<script>
@@ -28,12 +28,7 @@ const internalNameUIScript = `<script>
     return src;
   }
   function coverageLabel(p){var c=p.coverage||{};if(c.label)return esc(c.label);if(p.has_volume)return '巻 '+esc(p.volume);return '-';}
-  async function registerAlias(alias,canonical){
-    alias=(alias||'').trim();canonical=(canonical||'').trim();
-    var a=prompt('別名として登録する名称',alias);if(a===null)return;a=a.trim();if(!a)return;
-    var c=prompt('統一先のシリーズ名',canonical);if(c===null)return;c=c.trim();if(!c)return;
-    try{await api('api/aliases',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alias:a,canonical:c})});await scan();alert('別名を保存しました');}catch(e){alert('別名保存失敗: '+e.message);}
-  }
+  async function registerAlias(alias,canonical){alias=(alias||'').trim();canonical=(canonical||'').trim();var a=prompt('別名として登録する名称',alias);if(a===null)return;a=a.trim();if(!a)return;var c=prompt('統一先のシリーズ名',canonical);if(c===null)return;c=c.trim();if(!c)return;try{await api('api/aliases',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alias:a,canonical:c})});await scan();alert('別名を保存しました');}catch(e){alert('別名保存失敗: '+e.message)}}
   window.saveSeriesAlias=registerAlias;
   window.scan=async function(){
     var ps=await api('api/scan',{method:'POST'}),h='';
@@ -42,8 +37,10 @@ const internalNameUIScript = `<script>
       if(Array.isArray(cl.aliases)){for(var i=0;i<cl.aliases.length;i++){if(cl.aliases[i]!==p.series){alias=cl.aliases[i];break;}}}
       var aliasBtn='<div style="margin-top:5px"><button style="padding:3px 7px;font-size:12px" onclick="saveSeriesAlias('+JSON.stringify(alias||p.series)+','+JSON.stringify(p.series||'')+')">別名登録</button></div>';
       var fileLabel=esc(p.name)+(p.multipart?'<div class="muted">分割RAR '+Number(p.part_count||0)+'パート</div>':'');
-      h+='<tr><td><input type="checkbox" data-name="'+esc(p.name)+'" '+(!p.needs_review&&!p.error?'checked':'')+' '+(p.error?'disabled':'')+'></td>'+
-        '<td>'+fileLabel+(p.error?'<div class="bad">'+esc(p.error)+'</div>':'')+'</td>'+
+      var disabled=p.error||p.skipped,checked=!p.needs_review&&!disabled;
+      var state=p.skipped?'<div class="muted">既存出力あり: スキップ</div>':'';
+      h+='<tr><td><input type="checkbox" data-name="'+esc(p.name)+'" '+(checked?'checked':'')+' '+(disabled?'disabled':'')+'></td>'+
+        '<td>'+fileLabel+(p.error?'<div class="bad">'+esc(p.error)+'</div>':'')+state+'</td>'+
         '<td><strong>'+esc(p.series||'-')+'</strong>'+ev+aliasBtn+'</td>'+
         '<td>'+coverage+'</td>'+
         '<td class="'+(p.needs_review?'warn':'ok')+'">'+Math.round((p.confidence||0)*100)+'% '+(p.needs_review?'確認':'OK')+'</td>'+
