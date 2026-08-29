@@ -2,6 +2,7 @@ package organizer
 
 import (
 	"archive/zip"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -48,8 +49,8 @@ func TestNewerQuarantinedVariantCanReplaceOlderActiveCopy(t *testing.T) {
 	f, err := zip.OpenReader(active); if err != nil { t.Fatal(err) }
 	defer f.Close()
 	r, err := f.File[0].Open(); if err != nil { t.Fatal(err) }
-	buf := make([]byte, 3)
-	if _, err := r.Read(buf); err != nil { t.Fatal(err) }
+	data, err := io.ReadAll(r)
 	_ = r.Close()
-	if string(buf) != "new" { t.Fatalf("active copy is %q, want new", string(buf)) }
+	if err != nil { t.Fatal(err) }
+	if string(data) != "new" { t.Fatalf("active copy is %q, want new", string(data)) }
 }
