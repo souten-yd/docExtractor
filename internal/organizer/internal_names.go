@@ -10,22 +10,26 @@ import (
 )
 
 type nameEvidence struct {
-	Parsed     classifier.Result
-	Source     string
-	Evidence   []string
-	Candidates []string
+	Parsed         classifier.Result
+	Coverage       classifier.Coverage
+	Source         string
+	Evidence       []string
+	Candidates     []string
+	CandidateCount int
 }
 
 type scoredName struct {
-	parsed classifier.Result
-	kind   archive.NameCandidateKind
-	name   string
-	score  float64
+	parsed   classifier.Result
+	coverage classifier.Coverage
+	kind     archive.NameCandidateKind
+	name     string
+	score    float64
 }
 
 func inferFromArchive(outerName, filename string) nameEvidence {
 	outer := classifier.Parse(outerName)
-	best := nameEvidence{Parsed: outer, Source: "outer-filename", Evidence: []string{"outer filename"}}
+	outerCoverage := classifier.ParseCoverage(outerName)
+	best := nameEvidence{Parsed: outer, Coverage: outerCoverage, Source: "outer-filename", Evidence: []string{"outer filename"}}
 	inspection, err := archive.InspectNames(filename)
 	if err != nil || len(inspection.Candidates) == 0 {
 		return best
@@ -43,7 +47,7 @@ func inferFromArchive(outerName, filename string) nameEvidence {
 			score += 0.16
 		}
 		idx := len(items)
-		items = append(items, scoredName{parsed: parsed, kind: candidate.Kind, name: candidate.Name, score: score})
+		items = append(items, scoredName{parsed: parsed, coverage: classifier.ParseCoverage(candidate.Name), kind: candidate.Kind, name: candidate.Name, score: score})
 		key := classifier.GroupKey(parsed.Series)
 		groups[key] = append(groups[key], idx)
 	}
@@ -76,16 +80,22 @@ func inferFromArchive(outerName, filename string) nameEvidence {
 	parsed := winner.parsed
 	parsed.Confidence = math.Min(0.99, math.Max(parsed.Confidence, math.Min(0.99, winner.score)))
 
-	// If multiple internal entries clearly represent different volumes, the
-	// enclosing archive is a collection. Use those names for the series but do
-	// not misleadingly label the whole outer archive as the first volume.
+	coverages := make([]classifier.Coverage, 0, len(winnerGroup))
 	volumes := make(map[int]struct{})
 	for _, idx := range winnerGroup {
+		coverages = append(coverages, items[idx].coverage)
 		if items[idx].parsed.HasVolume {
 			volumes[items[idx].parsed.Volume] = struct{}{}
 		}
 	}
-	multiVolume := len(volumes) > 1
+	coverage := classifier.MergeCoverage(coverages)
+	if coverage.Kind == classifier.CoverageUnknown {
+		coverage = outerCoverage
+	}
+	multiVolume := coverage.VolumeStart > 0 && coverage.VolumeEnd > coverage.VolumeStart
+	if len(volumes) > 1 {
+		multiVolume = true
+	}
 	if multiVolume {
 		parsed.Volume = 0
 		parsed.HasVolume = false
@@ -94,15 +104,18 @@ func inferFromArchive(outerName, filename string) nameEvidence {
 		parsed.HasVolume = true
 	}
 
-	candidateNames := make([]string, 0, 6)
+	candidateNames := make([]string, 0, 10)
+	candidateCount := 0
 	for _, item := range items {
 		if classifier.GroupKey(item.parsed.Series) != groupKey {
 			continue
 		}
-		candidateNames = appendUnique(candidateNames, item.name, 6)
+		candidateCount++
+		candidateNames = appendUnique(candidateNames, item.name, 10)
 	}
 	if len(candidateNames) == 0 {
 		candidateNames = append(candidateNames, winner.name)
+		candidateCount = 1
 	}
 	evidence := []string{string(winner.kind), "archive metadata"}
 	if containsJapanese(winner.name) {
@@ -114,7 +127,13 @@ func inferFromArchive(outerName, filename string) nameEvidence {
 	if multiVolume {
 		evidence = append(evidence, "multiple volumes detected")
 	}
-	return nameEvidence{Parsed: parsed, Source: string(winner.kind), Evidence: evidence, Candidates: candidateNames}
+	if coverage.ChapterStart > 0 {
+		evidence = append(evidence, "chapter coverage detected")
+	}
+	if inspection.Truncated {
+		evidence = append(evidence, "metadata scan truncated at safety limit")
+	}
+	return nameEvidence{Parsed: parsed, Coverage: coverage, Source: string(winner.kind), Evidence: evidence, Candidates: candidateNames, CandidateCount: candidateCount}
 }
 
 func kindBonus(kind archive.NameCandidateKind) float64 {
