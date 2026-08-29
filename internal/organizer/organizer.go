@@ -45,6 +45,9 @@ type Plan struct {
 	Candidates     []string            `json:"candidates,omitempty"`
 	CandidateCount int                 `json:"candidate_count,omitempty"`
 	Cluster        ClusterInfo         `json:"cluster,omitempty"`
+	Multipart      bool                `json:"multipart,omitempty"`
+	PartCount      int                 `json:"part_count,omitempty"`
+	Parts          []string            `json:"parts,omitempty"`
 	Error          string              `json:"error,omitempty"`
 }
 
@@ -82,6 +85,9 @@ func (o *Organizer) Scan() ([]Plan, error) {
 	for _, entry := range entries {
 		if entry.IsDir() { continue }
 		ext := strings.ToLower(filepath.Ext(entry.Name())); if ext != ".zip" && ext != ".rar" { continue }
+		// Secondary *.partN.rar files are continuation volumes, not standalone
+		// archives. Only part1 is surfaced as the logical archive.
+		if ext == ".rar" && archive.IsSecondaryRARVolume(entry.Name()) { continue }
 		plan, err := o.planNameAt(root, entry.Name(), false)
 		if err != nil { plans = append(plans, Plan{Name: entry.Name(), Source: filepath.Join(root, entry.Name()), NeedsReview: true, Error: err.Error()}); continue }
 		plans = append(plans, plan)
@@ -102,14 +108,35 @@ func (o *Organizer) planNameAt(root,name string,useResolved bool)(Plan,error){
 	source:=filepath.Join(root,name); if !allowedAt(root,source){return Plan{},errors.New("source escapes configured root")}
 	st,err:=os.Lstat(source); if err!=nil{return Plan{},err}; if st.Mode()&os.ModeSymlink!=0{return Plan{},errors.New("symbolic-link archives are not allowed")}; if !st.Mode().IsRegular(){return Plan{},errors.New("source is not a regular archive")}
 
+	multipart:=false
+	partCount:=0
+	partNames:=[]string(nil)
+	if ext==".rar" {
+		set,isMulti,merr:=archive.DiscoverMultipartRAR(source)
+		if merr!=nil{return Plan{},merr}
+		if isMulti {
+			multipart=true
+			if set.Primary=="" { return Plan{},errors.New("multipart RAR is missing part1") }
+			if filepath.Clean(source)!=filepath.Clean(set.Primary) { return Plan{},errors.New("secondary multipart RAR volume cannot be executed directly") }
+			if len(set.Missing)>0 { return Plan{},fmt.Errorf("multipart RAR is missing part(s): %v",set.Missing) }
+			partCount=len(set.Parts)
+			partNames=make([]string,0,len(set.Parts))
+			for _,p:=range set.Parts { partNames=append(partNames,filepath.Base(p)) }
+		}
+	}
+
 	naming:=inferFromArchive(name,source); parsed:=naming.Parsed
 	if canonical,ok:=aliasLookup(o.Aliases(),parsed.Series);ok{parsed.Series=canonical; naming.Evidence=append(naming.Evidence,"saved alias")}
 	if useResolved { o.mu.RLock(); canonical:=o.resolved[name]; o.mu.RUnlock(); if canonical!=""{parsed.Series=canonical; naming.Evidence=append(naming.Evidence,"scan cluster") } }
 	outName:=name; action:="rename-zip"; entries:=0
-	if ext==".rar"{outName=strings.TrimSuffix(name,filepath.Ext(name))+".zip"; info,err:=archive.InspectRAR(source); if err!=nil{return Plan{},fmt.Errorf("RAR inspection failed: %w",err)}; entries=info.RegularFiles; if info.SingleNestedZIP{action="unwrap-nested-zip"}else{action="rar-to-zip"}}
+	if ext==".rar"{
+		outName=archive.MultipartOutputStem(name)+".zip"
+		info,err:=archive.InspectRAR(source); if err!=nil{return Plan{},fmt.Errorf("RAR inspection failed: %w",err)}; entries=info.RegularFiles; if info.SingleNestedZIP{action="unwrap-nested-zip"}else{action="rar-to-zip"}
+	}
 	seriesDir:=filepath.Join(root,parsed.Series); if err:=rejectSymlinkComponents(root,seriesDir);err!=nil{return Plan{},err}
 	destination:=filepath.Join(seriesDir,outName); needsReview:=parsed.Confidence<o.confidenceThreshold
-	plan:=Plan{Name:name,Source:source,Destination:destination,Series:parsed.Series,Author:parsed.Author,Volume:parsed.Volume,HasVolume:parsed.HasVolume,Coverage:naming.Coverage,Confidence:parsed.Confidence,NeedsReview:needsReview,Action:action,Entries:entries,NameSource:naming.Source,Evidence:naming.Evidence,Candidates:naming.Candidates,CandidateCount:naming.CandidateCount}
+	plan:=Plan{Name:name,Source:source,Destination:destination,Series:parsed.Series,Author:parsed.Author,Volume:parsed.Volume,HasVolume:parsed.HasVolume,Coverage:naming.Coverage,Confidence:parsed.Confidence,NeedsReview:needsReview,Action:action,Entries:entries,NameSource:naming.Source,Evidence:naming.Evidence,Candidates:naming.Candidates,CandidateCount:naming.CandidateCount,Multipart:multipart,PartCount:partCount,Parts:partNames}
+	if multipart { plan.Evidence=append(plan.Evidence,fmt.Sprintf("multipart RAR: %d parts",partCount)) }
 	if _,err:=os.Lstat(destination);err==nil{plan.NeedsReview=true;plan.Error="destination already exists";return plan,nil}else if !errors.Is(err,os.ErrNotExist){return Plan{},err}
 	return plan,nil
 }
