@@ -8,7 +8,7 @@ PIDFILE="$VAR/docExtractor.pid"
 LOGFILE="$VAR/service.log"
 CONF="$QPKG_ROOT/docExtractor.conf"
 
-LISTEN="127.0.0.1:8765"
+LISTEN="0.0.0.0:8765"
 ROOT="/share/Download/Temp"
 BROWSE_ROOT="/share"
 SETTINGS_FILE="/etc/config/docExtractor.settings.json"
@@ -75,7 +75,7 @@ start() {
     rm -f "$PIDFILE"
     return 1
   fi
-  log_service "service started pid=$PID"
+  log_service "service started pid=$PID listen=$LISTEN"
   return 0
 }
 
