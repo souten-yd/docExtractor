@@ -12,6 +12,11 @@ const internalNameUIScript = `<script>
   function sourceLabel(s){return ({'nested-archive':'内部ZIP/RAR','top-directory':'内部フォルダ','named-image':'画像ファイル名','outer-filename':'外側ファイル名'})[s]||s||'外側ファイル名';}
   function evidenceHTML(p){
     var src='<div class="muted">判定元: '+esc(sourceLabel(p.name_source))+'</div>';
+    if(p.multipart){
+      var parts=Array.isArray(p.parts)?p.parts:[],count=Number(p.part_count||parts.length||0);
+      src+='<div class="muted" style="margin-top:2px"><strong>分割RAR: '+count+'パート</strong>（part1を代表として処理）</div>';
+      if(parts.length)src+='<details class="muted"><summary>分割ファイルを確認</summary><div style="padding-left:8px">'+parts.map(function(x){return '<div>• '+esc(x)+'</div>';}).join('')+'</div></details>';
+    }
     var cl=p.cluster||{};
     if(cl.canonical){
       var aliases=Array.isArray(cl.aliases)?cl.aliases:[];
@@ -36,8 +41,9 @@ const internalNameUIScript = `<script>
       var ev=evidenceHTML(p),coverage=coverageLabel(p),cl=p.cluster||{},alias='';
       if(Array.isArray(cl.aliases)){for(var i=0;i<cl.aliases.length;i++){if(cl.aliases[i]!==p.series){alias=cl.aliases[i];break;}}}
       var aliasBtn='<div style="margin-top:5px"><button style="padding:3px 7px;font-size:12px" onclick="saveSeriesAlias('+JSON.stringify(alias||p.series)+','+JSON.stringify(p.series||'')+')">別名登録</button></div>';
+      var fileLabel=esc(p.name)+(p.multipart?'<div class="muted">分割RAR '+Number(p.part_count||0)+'パート</div>':'');
       h+='<tr><td><input type="checkbox" data-name="'+esc(p.name)+'" '+(!p.needs_review&&!p.error?'checked':'')+' '+(p.error?'disabled':'')+'></td>'+
-        '<td>'+esc(p.name)+(p.error?'<div class="bad">'+esc(p.error)+'</div>':'')+'</td>'+
+        '<td>'+fileLabel+(p.error?'<div class="bad">'+esc(p.error)+'</div>':'')+'</td>'+
         '<td><strong>'+esc(p.series||'-')+'</strong>'+ev+aliasBtn+'</td>'+
         '<td>'+coverage+'</td>'+
         '<td class="'+(p.needs_review?'warn':'ok')+'">'+Math.round((p.confidence||0)*100)+'% '+(p.needs_review?'確認':'OK')+'</td>'+
