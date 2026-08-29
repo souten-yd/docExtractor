@@ -17,7 +17,13 @@ type directoryEntry struct { Name string `json:"name"`; Path string `json:"path"
 type directoryResponse struct { Path string `json:"path"`; Parent string `json:"parent,omitempty"`; Entries []directoryEntry `json:"entries"` }
 
 func (s *Server) getSettings(w http.ResponseWriter,r *http.Request){
-	aliases:=map[string]string{};if s.Settings!=nil{aliases=s.Settings.Get().SeriesAliases};writeJSON(w,appsettings.Settings{Root:s.Organizer.Root(),OutputRoot:s.Organizer.OutputRoot(),CollisionPolicy:s.Organizer.CollisionPolicy(),SeriesAliases:aliases})
+	aliases:=map[string]string{}
+	if s.Settings!=nil{
+		current:=s.Settings.Get();aliases=current.SeriesAliases
+		if current.OutputRoot!=""{_ = s.Organizer.SetOutputRoot(current.OutputRoot)}
+		s.Organizer.SetCollisionPolicy(current.CollisionPolicy)
+	}
+	writeJSON(w,appsettings.Settings{Root:s.Organizer.Root(),OutputRoot:s.Organizer.OutputRoot(),CollisionPolicy:s.Organizer.CollisionPolicy(),SeriesAliases:aliases})
 }
 func (s *Server) updateSettings(w http.ResponseWriter,r *http.Request){
 	if s.Settings==nil{http.Error(w,"settings store unavailable",http.StatusServiceUnavailable);return}
