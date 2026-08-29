@@ -27,16 +27,10 @@ func emitReconcileProgress(cb ReconcileProgressFunc, phase string, completed, to
 	}
 }
 
-// ReconcileScanMultiProgress preserves the default safety behavior: quarantine
-// directories are not part of a normal scan.
 func (o *Organizer) ReconcileScanMultiProgress(roots []string, outputRoot string, cb ReconcileProgressFunc) (ReconcileReport, error) {
 	return o.ReconcileScanMultiProgressWithOptions(roots, outputRoot, ReconcileScanOptions{}, cb)
 }
 
-// ReconcileScanMultiProgressWithOptions is the large-library variant. When
-// IncludeQuarantine is true, archives already under .docExtractor-duplicates
-// participate in classification/dedup/version selection and can be restored to
-// the normal library if they are the selected copy. Nothing is deleted.
 func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, outputRoot string, opts ReconcileScanOptions, cb ReconcileProgressFunc) (ReconcileReport, error) {
 	roots, outputRoot, err := normalizeReconcileRoots(roots, outputRoot)
 	if err != nil {
@@ -80,9 +74,6 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 	for _, root := range roots {
 		err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
-				// A huge library should not fail because one nested entry is unreadable.
-				// The root itself is validated before walking; nested failures are kept
-				// as errors where possible and the remaining tree continues.
 				if path != root {
 					return nil
 				}
@@ -178,6 +169,7 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 	emitReconcileProgress(cb, "variants", total, total, "同一巻の版を比較中")
 	choices := resolveSameVolumeVariantsProgress(outputRoot, items)
 	markDestinationConflicts(items)
+	restoreConflictsWhoseDestinationWillBeVacated(items)
 
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Series != items[j].Series {
@@ -248,7 +240,7 @@ func markExactDuplicatesProgress(root string, items []ReconcileItem, cb Reconcil
 			for _, idx := range dups[1:] {
 				keeperQ := inQuarantine(items[keeper].LibraryRoot, items[keeper].Source)
 				idxQ := inQuarantine(items[idx].LibraryRoot, items[idx].Source)
-				if keeperQ && !idxQ || keeperQ == idxQ && items[idx].ModifiedAt.After(items[keeper].ModifiedAt) {
+				if (keeperQ && !idxQ) || (keeperQ == idxQ && items[idx].ModifiedAt.After(items[keeper].ModifiedAt)) {
 					keeper = idx
 				}
 			}
@@ -322,9 +314,29 @@ func resolveSameVolumeVariantsProgress(root string, items []ReconcileItem) []Rec
 	return choices
 }
 
-// ReconcileExecuteReportProgress executes a previously scanned report, avoiding
-// a second full scan. Quarantine/supersede moves run before restore/normal moves
-// so a selected quarantined file can safely take the old active destination.
+// markDestinationConflicts runs before execution, so a destination that exists
+// now would normally be a conflict. If that exact destination is itself a
+// duplicate/superseded source scheduled to move away first, the restore move is
+// safe and should remain executable.
+func restoreConflictsWhoseDestinationWillBeVacated(items []ReconcileItem) {
+	vacated := map[string]struct{}{}
+	for _, it := range items {
+		if (it.Action == "duplicate" || it.Action == "superseded") && filepath.Clean(it.Source) != filepath.Clean(it.Destination) {
+			vacated[filepath.Clean(it.Source)] = struct{}{}
+		}
+	}
+	for i := range items {
+		it := &items[i]
+		if it.Action != "conflict" {
+			continue
+		}
+		if _, ok := vacated[filepath.Clean(it.Destination)]; ok {
+			it.Action = "move"
+			it.Reason = "destination will be vacated by older/duplicate copy before restore"
+		}
+	}
+}
+
 func (o *Organizer) ReconcileExecuteReportProgress(report ReconcileReport, selections map[string]string, cb ReconcileProgressFunc) (ReconcileResult, error) {
 	if len(report.Roots) == 0 {
 		return ReconcileResult{}, errors.New("reconcile report has no roots")
@@ -417,7 +429,6 @@ func (o *Organizer) ReconcileExecuteReportProgress(report ReconcileReport, selec
 		}
 	}
 
-	// Vacate active destinations first, then restore/reclassify winners.
 	executePhase(map[string]bool{"duplicate": true, "superseded": true})
 	executePhase(map[string]bool{"move": true})
 	for _, it := range report.Items {
