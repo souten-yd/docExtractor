@@ -88,5 +88,4 @@ func makeProcessor(p *archive.Processor, dm *diagnostics.Manager) jobs.Processor
 
 func writeStageMetric(logger *diagnostics.JobLogger,stage string,duration time.Duration,bytesRead,bytesWritten int64){if bytesRead<0{bytesRead=0};if bytesWritten<0{bytesWritten=0};_ = logger.Write(diagnostics.Event{Component:"worker",Stage:stage,Message:"stage completed",DurationMS:duration.Milliseconds(),BytesRead:bytesRead,BytesWritten:bytesWritten,Fields:map[string]any{"read_mib_per_sec":throughputMiB(bytesRead,duration),"write_mib_per_sec":throughputMiB(bytesWritten,duration),"io_mib_per_sec":throughputMiB(bytesRead+bytesWritten,duration)}})}
 func throughputMiB(bytes int64,d time.Duration)float64{if bytes<=0||d<=0{return 0};return(float64(bytes)/(1024*1024))/d.Seconds()}
-
-func cleanupLoop(ctx context.Context,dm *diagnostics.Manager){ticker:=time.NewTicker(12*time.Hour);defer ticker.Stop();for{select{case<-ctx.Done():return;case<-ticker.C:_=dm.Cleanup()}}}
+func cleanupLoop(ctx context.Context,dm *diagnostics.Manager){_ = dm.Cleanup(time.Now().UTC());ticker:=time.NewTicker(24*time.Hour);defer ticker.Stop();for{select{case<-ctx.Done():return;case now:=<-ticker.C:_=dm.Cleanup(now.UTC())}}}
