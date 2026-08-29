@@ -3,7 +3,6 @@ package archive
 import (
 	"archive/zip"
 	"errors"
-	"io"
 	"path"
 	"path/filepath"
 	"sort"
@@ -13,8 +12,12 @@ import (
 )
 
 const (
-	maxNameInspectEntries    = 5000
-	maxNameInspectCandidates = 256
+	// Manga collections can contain thousands of image entries and hundreds of
+	// nested volume/chapter archives. These are metadata-only bounds, not body
+	// extraction limits.
+	maxNameInspectEntries    = 20000
+	maxNameInspectCandidates = 4096
+	maxNamedImageCandidates  = 256
 )
 
 type NameCandidateKind string
@@ -31,9 +34,10 @@ type NameCandidate struct {
 }
 
 type NameInspection struct {
-	Entries    int             `json:"entries"`
-	Truncated  bool            `json:"truncated"`
-	Candidates []NameCandidate `json:"candidates,omitempty"`
+	Entries        int             `json:"entries"`
+	CandidateCount int             `json:"candidate_count"`
+	Truncated      bool            `json:"truncated"`
+	Candidates     []NameCandidate `json:"candidates,omitempty"`
 }
 
 func InspectNames(filename string) (NameInspection, error) {
@@ -86,10 +90,11 @@ func inspectRARNames(filename string) (NameInspection, error) {
 }
 
 type nameCollector struct {
-	out       NameInspection
-	seen      map[string]struct{}
-	topDirs   map[string]struct{}
-	candidate []NameCandidate
+	out         NameInspection
+	seen        map[string]struct{}
+	topDirs     map[string]struct{}
+	candidate   []NameCandidate
+	imageCount  int
 }
 
 func newNameCollector() *nameCollector {
@@ -97,10 +102,6 @@ func newNameCollector() *nameCollector {
 }
 
 func (c *nameCollector) add(raw string, isDir bool) {
-	if len(c.candidate) >= maxNameInspectCandidates {
-		c.out.Truncated = true
-		return
-	}
 	name := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
 	name = strings.TrimPrefix(path.Clean("/"+name), "/")
 	if name == "" || name == "." {
@@ -125,10 +126,12 @@ func (c *nameCollector) add(raw string, isDir bool) {
 		c.push(strings.TrimSuffix(base, path.Ext(base)), CandidateNestedArchive)
 		return
 	}
-	if isImageExt(ext) {
+	if isImageExt(ext) && c.imageCount < maxNamedImageCandidates {
 		stem := strings.TrimSuffix(base, path.Ext(base))
 		if usefulImageStem(stem) {
-			c.push(stem, CandidateNamedImage)
+			if c.push(strings.TrimSpace(stem), CandidateNamedImage) {
+				c.imageCount++
+			}
 		}
 	}
 }
@@ -142,21 +145,27 @@ func (c *nameCollector) finish() NameInspection {
 	for _, d := range dirs {
 		c.push(d, CandidateTopDirectory)
 	}
+	c.out.CandidateCount = len(c.candidate)
 	c.out.Candidates = c.candidate
 	return c.out
 }
 
-func (c *nameCollector) push(name string, kind NameCandidateKind) {
+func (c *nameCollector) push(name string, kind NameCandidateKind) bool {
 	name = strings.TrimSpace(name)
-	if name == "" || len(c.candidate) >= maxNameInspectCandidates {
-		return
+	if name == "" {
+		return false
 	}
 	key := string(kind) + "\x00" + strings.ToLower(name)
 	if _, ok := c.seen[key]; ok {
-		return
+		return false
 	}
 	c.seen[key] = struct{}{}
+	if len(c.candidate) >= maxNameInspectCandidates {
+		c.out.Truncated = true
+		return false
+	}
 	c.candidate = append(c.candidate, NameCandidate{Name: name, Kind: kind})
+	return true
 }
 
 func usefulDirectoryName(s string) bool {
@@ -176,7 +185,6 @@ func usefulImageStem(s string) bool {
 	if len([]rune(n)) < 3 || numericLike(n) {
 		return false
 	}
-	// Camera/scanner-style names are poor title evidence.
 	lower := strings.ToLower(n)
 	for _, prefix := range []string{"img_", "dsc_", "scan_", "page_", "p_"} {
 		if strings.HasPrefix(lower, prefix) && numericLike(strings.TrimPrefix(lower, prefix)) {
@@ -208,8 +216,3 @@ func isImageExt(ext string) bool {
 		return false
 	}
 }
-
-// Keep io imported in builds using older rardecode signatures where EOF may
-// surface during metadata enumeration. This also documents that inspection is
-// metadata-only and never copies entry bodies.
-var _ = io.EOF
