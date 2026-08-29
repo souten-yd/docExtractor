@@ -19,7 +19,7 @@ type Result struct {
 }
 
 var (
-	leadingBracket = regexp.MustCompile(`^\s*[\[【]([^\]】]+)[\]】]\s*`)
+	leadingBracket = regexp.MustCompile(`^\s*[\[【（(]([^\]】）)]+)[\]】）)]\s*`)
 	volumeJP       = regexp.MustCompile(`(?i)\s*第\s*([0-9０-９]{1,4})\s*(?:巻|卷)\b?`)
 	volumeVol      = regexp.MustCompile(`(?i)(?:^|[\s_\-])(?:vol(?:ume)?\.?|v)\s*([0-9０-９]{1,4})(?:\b|$)`)
 	volumeTail     = regexp.MustCompile(`(?:^|[\s_\-])([0-9０-９]{1,3})(?:\s*(?:巻|卷))?(?:\s*(?:特装版|通常版|限定版|完))?\s*$`)
@@ -33,14 +33,25 @@ var metadataTags = map[string]struct{}{
 	"complete": {}, "完結": {}, "web": {},
 }
 
+var knownExtensions = map[string]struct{}{
+	".zip": {}, ".rar": {}, ".cbz": {}, ".cbr": {}, ".7z": {},
+	".jpg": {}, ".jpeg": {}, ".png": {}, ".webp": {}, ".avif": {}, ".gif": {}, ".bmp": {}, ".tif": {}, ".tiff": {},
+}
+
 func Parse(filename string) Result {
-	base := strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename))
+	base := filepath.Base(filename)
+	if ext := strings.ToLower(filepath.Ext(base)); ext != "" {
+		if _, ok := knownExtensions[ext]; ok {
+			base = strings.TrimSuffix(base, filepath.Ext(base))
+		}
+	}
 	base = strings.TrimSpace(base)
 	result := Result{Confidence: 0.45}
 
-	// Legacy collections frequently prepend multiple bracket blocks, e.g.
-	// [一般コミック][山田太郎] 作品名 第01巻. Strip well-known metadata tags
-	// and use the last remaining leading bracket as the author/group candidate.
+	// Leading bracket blocks are metadata/creator annotations, not title text.
+	// Internal archive candidates often have no extension and creator names may
+	// contain dots (e.g. Y.A), so extension stripping above is deliberately
+	// limited to known archive/image extensions.
 	var authorCandidates []string
 	for {
 		m := leadingBracket.FindStringSubmatchIndex(base)
@@ -59,11 +70,6 @@ func Parse(filename string) Result {
 		result.Author = authorCandidates[len(authorCandidates)-1]
 		result.Confidence += 0.12
 		result.Reasons = append(result.Reasons, "author-prefix")
-		// Preserve uncommon extra bracket blocks as part of the title instead of
-		// silently discarding information. The final candidate remains author.
-		if len(authorCandidates) > 1 {
-			base = strings.Join(authorCandidates[:len(authorCandidates)-1], " ") + " " + base
-		}
 	}
 
 	for {
