@@ -77,7 +77,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(indexHTML))
+	_, _ = w.Write([]byte(renderIndexHTML()))
 }
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
