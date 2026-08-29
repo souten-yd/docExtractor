@@ -8,8 +8,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/souten-yd/docExtractor/internal/archive"
 )
 
 type ReconcileProgress struct {
@@ -31,6 +29,11 @@ func (o *Organizer) ReconcileScanMultiProgress(roots []string, outputRoot string
 	return o.ReconcileScanMultiProgressWithOptions(roots, outputRoot, ReconcileScanOptions{}, cb)
 }
 
+// ReconcileScanMultiProgressWithOptions intentionally treats existing libraries
+// as already-normalized archives. It never opens ZIP/RAR members for naming.
+// The filesystem archive filename is the primary identity source; parent folders
+// are only supporting evidence. File bodies are read later only when SHA-256 is
+// required for a same-size duplicate candidate.
 func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, outputRoot string, opts ReconcileScanOptions, cb ReconcileProgressFunc) (ReconcileReport, error) {
 	roots, outputRoot, err := normalizeReconcileRoots(roots, outputRoot)
 	if err != nil {
@@ -40,9 +43,12 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 	total := 0
 	emitReconcileProgress(cb, "counting", 0, 0, "対象ファイル数を確認中")
 	for _, root := range roots {
-		err = filepath.WalkDir(root, func(path string, d os.DirEntry, e error) error {
-			if e != nil {
-				return e
+		err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				if path == root {
+					return walkErr
+				}
+				return nil
 			}
 			if path == root {
 				return nil
@@ -53,8 +59,7 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 				}
 				return nil
 			}
-			ext := strings.ToLower(filepath.Ext(d.Name()))
-			if ext == ".zip" || (ext == ".rar" && !archive.IsSecondaryRARVolume(d.Name())) {
+			if isReconcileArchiveName(d.Name()) {
 				total++
 			}
 			return nil
@@ -64,20 +69,21 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 		}
 	}
 
-	message := "内部名とシリーズを解析中"
+	msg := "ファイル名からシリーズ・巻番号を解析中（アーカイブ内部は参照しません）"
 	if opts.IncludeQuarantine {
-		message = "通常ライブラリ＋隔離フォルダを解析中"
+		msg = "通常ライブラリ＋隔離フォルダのファイル名を解析中（アーカイブ内部は参照しません）"
 	}
-	emitReconcileProgress(cb, "inspecting", 0, total, message)
+	emitReconcileProgress(cb, "inspecting", 0, total, msg)
+
 	raws := make([]reconcileRaw, 0, total)
 	done := 0
 	for _, root := range roots {
 		err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
-				if path != root {
-					return nil
+				if path == root {
+					return walkErr
 				}
-				return walkErr
+				return nil
 			}
 			if path == root {
 				return nil
@@ -89,16 +95,13 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 				}
 				return nil
 			}
-			ext := strings.ToLower(filepath.Ext(d.Name()))
-			if ext != ".zip" && ext != ".rar" {
+			if !isReconcileArchiveName(d.Name()) {
 				return nil
 			}
-			if ext == ".rar" && archive.IsSecondaryRARVolume(d.Name()) {
-				return nil
-			}
-			st, e := os.Lstat(path)
-			if e != nil {
-				raws = append(raws, reconcileRaw{path: path, root: root, rel: rel, name: d.Name(), err: e})
+
+			st, statErr := os.Lstat(path)
+			if statErr != nil {
+				raws = append(raws, reconcileRaw{path: path, root: root, rel: rel, name: d.Name(), err: statErr})
 				done++
 				emitReconcileProgress(cb, "inspecting", done, total, d.Name())
 				return nil
@@ -109,16 +112,19 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 				return nil
 			}
 
-			n := inferFromArchive(d.Name(), path)
+			n := inferExistingArchiveName(d.Name())
 			series, confidence := parentSeriesEvidence(root, path, n.Parsed.Series, n.Parsed.Confidence, o.confidenceThreshold)
 			if canonical, ok := aliasLookup(o.Aliases(), series); ok && seriesNameUsable(canonical) {
 				series, confidence = canonical, 1
 			}
 			if !seriesNameUsable(series) {
-				series = ""
-				confidence = 0
+				series, confidence = "", 0
 			}
-			raws = append(raws, reconcileRaw{path: path, root: root, rel: rel, name: d.Name(), series: series, confidence: confidence, size: st.Size(), modified: st.ModTime(), volume: n.Parsed.Volume, hasVolume: n.Parsed.HasVolume})
+			raws = append(raws, reconcileRaw{
+				path: path, root: root, rel: rel, name: d.Name(), series: series,
+				confidence: confidence, size: st.Size(), modified: st.ModTime(),
+				volume: n.Parsed.Volume, hasVolume: n.Parsed.HasVolume,
+			})
 			done++
 			emitReconcileProgress(cb, "inspecting", done, total, d.Name())
 			return nil
@@ -128,7 +134,7 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 		}
 	}
 
-	emitReconcileProgress(cb, "clustering", done, total, "シリーズ表記を統合中")
+	emitReconcileProgress(cb, "clustering", done, total, "ファイル名由来のシリーズ表記を統合中")
 	plans := make([]Plan, len(raws))
 	for i, r := range raws {
 		if r.err != nil {
@@ -141,14 +147,18 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 
 	items := make([]ReconcileItem, len(raws))
 	for i, r := range raws {
-		it := ReconcileItem{Source: r.path, LibraryRoot: r.root, Relative: r.rel, Series: plans[i].Series, Confidence: r.confidence, Size: r.size, ModifiedAt: r.modified, Volume: r.volume, HasVolume: r.hasVolume}
+		it := ReconcileItem{
+			Source: r.path, LibraryRoot: r.root, Relative: r.rel, Series: plans[i].Series,
+			Confidence: r.confidence, Size: r.size, ModifiedAt: r.modified,
+			Volume: r.volume, HasVolume: r.hasVolume,
+		}
 		if r.err != nil {
 			it.Action, it.Reason = "error", r.err.Error()
 			items[i] = it
 			continue
 		}
 		if !seriesNameUsable(it.Series) {
-			it.Action, it.Reason = "error", "series could not be determined safely"
+			it.Action, it.Reason = "error", "series could not be determined safely from filename"
 			items[i] = it
 			continue
 		}
@@ -156,17 +166,17 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 		if filepath.Clean(it.Destination) == filepath.Clean(r.path) {
 			it.Action = "keep"
 		} else {
-			it.Action, it.Reason = "move", "normalize series folder"
+			it.Action, it.Reason = "move", "normalize series folder from archive filename"
 			if inQuarantine(r.root, r.path) {
-				it.Reason = "restore/reclassify from quarantine"
+				it.Reason = "restore/reclassify from quarantine using archive filename"
 			}
 		}
 		items[i] = it
 	}
 
-	emitReconcileProgress(cb, "duplicates", 0, total, "同サイズ候補のSHA-256を確認中")
+	emitReconcileProgress(cb, "duplicates", 0, total, "同サイズ候補だけSHA-256を確認中")
 	markExactDuplicatesProgress(outputRoot, items, cb, total)
-	emitReconcileProgress(cb, "variants", total, total, "同一巻の版を比較中")
+	emitReconcileProgress(cb, "variants", total, total, "同一シリーズ・同一巻の更新日時を比較中")
 	choices := resolveSameVolumeVariantsProgress(outputRoot, items)
 	markDestinationConflicts(items)
 	restoreConflictsWhoseDestinationWillBeVacated(items)
@@ -180,6 +190,7 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 		}
 		return items[i].Source < items[j].Source
 	})
+
 	report := ReconcileReport{Root: roots[0], Roots: roots, OutputRoot: outputRoot, Items: items, Choices: choices}
 	for _, it := range items {
 		report.Summary.Files++
@@ -200,8 +211,30 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 			report.Summary.Errors++
 		}
 	}
-	emitReconcileProgress(cb, "done", total, total, "解析完了")
+	emitReconcileProgress(cb, "done", total, total, "解析完了（アーカイブ内部の読み取りなし）")
 	return report, nil
+}
+
+func isReconcileArchiveName(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext == ".zip" {
+		return true
+	}
+	return ext == ".rar" && !isSecondaryRARName(name)
+}
+
+func isSecondaryRARName(name string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name))), ".part2") || isSecondaryRARVolumeByParser(name)
+}
+
+func isSecondaryRARVolumeByParser(name string) bool {
+	// Keep multipart detection centralized without opening the archive body.
+	return archiveSecondaryRAR(name)
+}
+
+func archiveSecondaryRAR(name string) bool {
+	// This tiny wrapper exists so the reconcile path's intent remains explicit.
+	return isSecondaryRARVolumeName(name)
 }
 
 func markExactDuplicatesProgress(root string, items []ReconcileItem, cb ReconcileProgressFunc, total int) {
@@ -217,6 +250,11 @@ func markExactDuplicatesProgress(root string, items []ReconcileItem, cb Reconcil
 			hashTotal += len(idxs)
 		}
 	}
+	if hashTotal == 0 {
+		emitReconcileProgress(cb, "duplicates", total, total, "同サイズの重複候補なし")
+		return
+	}
+
 	hashed := 0
 	for _, idxs := range groups {
 		if len(idxs) < 2 {
@@ -261,9 +299,6 @@ func markExactDuplicatesProgress(root string, items []ReconcileItem, cb Reconcil
 			}
 		}
 	}
-	if hashTotal == 0 {
-		emitReconcileProgress(cb, "duplicates", total, total, "重複ハッシュ候補なし")
-	}
 }
 
 func resolveSameVolumeVariantsProgress(root string, items []ReconcileItem) []ReconcileChoice {
@@ -300,6 +335,7 @@ func resolveSameVolumeVariantsProgress(root string, items []ReconcileItem) []Rec
 			}
 			continue
 		}
+
 		seq++
 		id := fmt.Sprintf("volume-choice-%d", seq)
 		choice := ReconcileChoice{ID: id, Series: items[winner].Series, Volume: items[winner].Volume, HasVolume: true, Reason: "same series/volume has no unique newest file"}
@@ -314,10 +350,6 @@ func resolveSameVolumeVariantsProgress(root string, items []ReconcileItem) []Rec
 	return choices
 }
 
-// markDestinationConflicts runs before execution, so a destination that exists
-// now would normally be a conflict. If that exact destination is itself a
-// duplicate/superseded source scheduled to move away first, the restore move is
-// safe and should remain executable.
 func restoreConflictsWhoseDestinationWillBeVacated(items []ReconcileItem) {
 	vacated := map[string]struct{}{}
 	for _, it := range items {
@@ -341,42 +373,40 @@ func (o *Organizer) ReconcileExecuteReportProgress(report ReconcileReport, selec
 	if len(report.Roots) == 0 {
 		return ReconcileResult{}, errors.New("reconcile report has no roots")
 	}
-	if len(report.Choices) > 0 {
-		for _, choice := range report.Choices {
-			selected := filepath.Clean(selections[choice.ID])
-			if selections == nil || selected == "." || selected == "" {
-				return ReconcileResult{}, fmt.Errorf("selection required for %s volume %d", choice.Series, choice.Volume)
+	for _, choice := range report.Choices {
+		selected := filepath.Clean(selections[choice.ID])
+		if selections == nil || selected == "." || selected == "" {
+			return ReconcileResult{}, fmt.Errorf("selection required for %s volume %d", choice.Series, choice.Volume)
+		}
+		found := false
+		for i := range report.Items {
+			it := &report.Items[i]
+			if it.ReviewGroup != choice.ID {
+				continue
 			}
-			found := false
-			for i := range report.Items {
-				it := &report.Items[i]
-				if it.ReviewGroup != choice.ID {
-					continue
-				}
-				if filepath.Clean(it.Source) == selected {
-					found = true
-					if filepath.Clean(it.Source) == filepath.Clean(filepath.Join(report.OutputRoot, it.Series, filepath.Base(it.Source))) {
-						it.Action = "keep"
-					} else {
-						it.Action = "move"
-					}
-					it.Destination = filepath.Join(report.OutputRoot, it.Series, filepath.Base(it.Source))
-					it.Reason = "selected by user"
-				} else if inQuarantine(it.LibraryRoot, it.Source) {
+			if filepath.Clean(it.Source) == selected {
+				found = true
+				it.Destination = filepath.Join(report.OutputRoot, it.Series, filepath.Base(it.Source))
+				if filepath.Clean(it.Source) == filepath.Clean(it.Destination) {
 					it.Action = "keep"
-					it.Destination = it.Source
-					it.DuplicateOf = selected
-					it.Reason = "not selected; already quarantined"
 				} else {
-					it.Action = "superseded"
-					it.Destination = uniqueQuarantinePath(report.OutputRoot, it.Series, filepath.Base(it.Source))
-					it.DuplicateOf = selected
-					it.Reason = "not selected for same series/volume"
+					it.Action = "move"
 				}
+				it.Reason = "selected by user"
+			} else if inQuarantine(it.LibraryRoot, it.Source) {
+				it.Action = "keep"
+				it.Destination = it.Source
+				it.DuplicateOf = selected
+				it.Reason = "not selected; already quarantined"
+			} else {
+				it.Action = "superseded"
+				it.Destination = uniqueQuarantinePath(report.OutputRoot, it.Series, filepath.Base(it.Source))
+				it.DuplicateOf = selected
+				it.Reason = "not selected for same series/volume"
 			}
-			if !found {
-				return ReconcileResult{}, fmt.Errorf("invalid selection for %s volume %d", choice.Series, choice.Volume)
-			}
+		}
+		if !found {
+			return ReconcileResult{}, fmt.Errorf("invalid selection for %s volume %d", choice.Series, choice.Volume)
 		}
 	}
 
@@ -429,6 +459,7 @@ func (o *Organizer) ReconcileExecuteReportProgress(report ReconcileReport, selec
 		}
 	}
 
+	// Vacate old/duplicate destinations first, then restore/move the selected copy.
 	executePhase(map[string]bool{"duplicate": true, "superseded": true})
 	executePhase(map[string]bool{"move": true})
 	for _, it := range report.Items {
@@ -442,5 +473,3 @@ func (o *Organizer) ReconcileExecuteReportProgress(report ReconcileReport, selec
 	emitReconcileProgress(cb, "done", total, total, "整理完了")
 	return result, nil
 }
-
-var _ = strconv.Itoa
