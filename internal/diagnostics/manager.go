@@ -168,35 +168,65 @@ func (m *Manager) Tail(jobID string, maxLines int) ([]Event, error) {
 	return out, nil
 }
 
-// WriteBundle emits a support ZIP without copying archive payloads. It only contains logs and small diagnostic metadata.
+// WriteBundle emits a support ZIP without copying archive payloads. It contains
+// diagnostic metadata and either one selected job log or, when no job is
+// selected, up to the ten most recently updated job logs.
 func (m *Manager) WriteBundle(w io.Writer, jobID string, snapshot any) error {
 	zw := zip.NewWriter(w)
-	defer zw.Close()
+	closeWith := func(err error) error {
+		closeErr := zw.Close()
+		if err != nil {
+			return err
+		}
+		return closeErr
+	}
 
+	jobIDs := make([]string, 0, 10)
 	if jobID != "" {
-		f, err := m.OpenJobLog(jobID)
+		jobIDs = append(jobIDs, jobID)
+	} else {
+		jobs, err := m.ListJobs()
 		if err != nil {
-			return err
+			return closeWith(err)
 		}
-		dst, err := zw.Create(filepath.ToSlash(filepath.Join("logs", jobID+".jsonl")))
-		if err != nil {
-			f.Close()
-			return err
+		if len(jobs) > 10 {
+			jobs = jobs[:10]
 		}
-		if _, err := io.Copy(dst, f); err != nil {
-			f.Close()
-			return err
+		for _, job := range jobs {
+			jobIDs = append(jobIDs, job.JobID)
 		}
-		f.Close()
+	}
+
+	for _, id := range jobIDs {
+		if err := m.addLogToBundle(zw, id); err != nil {
+			return closeWith(err)
+		}
 	}
 
 	meta, err := zw.Create("diagnostics.json")
 	if err != nil {
-		return err
+		return closeWith(err)
 	}
 	enc := json.NewEncoder(meta)
 	enc.SetIndent("", "  ")
-	return enc.Encode(snapshot)
+	if err := enc.Encode(snapshot); err != nil {
+		return closeWith(err)
+	}
+	return zw.Close()
+}
+
+func (m *Manager) addLogToBundle(zw *zip.Writer, jobID string) error {
+	f, err := m.OpenJobLog(jobID)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	dst, err := zw.Create(filepath.ToSlash(filepath.Join("logs", jobID+".jsonl")))
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(dst, f)
+	return err
 }
 
 func (m *Manager) Cleanup(now time.Time) error {

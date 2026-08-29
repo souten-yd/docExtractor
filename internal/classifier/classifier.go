@@ -19,27 +19,53 @@ type Result struct {
 }
 
 var (
-	authorPrefix = regexp.MustCompile(`^\s*[\[【]([^\]】]+)[\]】]\s*`)
-	volumeJP     = regexp.MustCompile(`(?i)\s*第\s*([0-9０-９]{1,4})\s*(?:巻|卷)\b?`)
-	volumeVol    = regexp.MustCompile(`(?i)(?:^|[\s_\-])(?:vol(?:ume)?\.?|v)\s*([0-9０-９]{1,4})(?:\b|$)`)
-	volumeTail   = regexp.MustCompile(`(?:^|[\s_\-])([0-9０-９]{1,3})(?:\s*(?:巻|卷))?(?:\s*(?:特装版|通常版|限定版|完))?\s*$`)
-	editionTail  = regexp.MustCompile(`(?i)\s*(?:\[[^\]]*(?:DL|電子|Digital)[^\]]*\]|\([^\)]*(?:DL|電子|Digital)[^\)]*\)|(?:特装版|通常版|限定版))\s*$`)
-	spaces       = regexp.MustCompile(`\s+`)
+	leadingBracket = regexp.MustCompile(`^\s*[\[【]([^\]】]+)[\]】]\s*`)
+	volumeJP       = regexp.MustCompile(`(?i)\s*第\s*([0-9０-９]{1,4})\s*(?:巻|卷)\b?`)
+	volumeVol      = regexp.MustCompile(`(?i)(?:^|[\s_\-])(?:vol(?:ume)?\.?|v)\s*([0-9０-９]{1,4})(?:\b|$)`)
+	volumeTail     = regexp.MustCompile(`(?:^|[\s_\-])([0-9０-９]{1,3})(?:\s*(?:巻|卷))?(?:\s*(?:特装版|通常版|限定版|完))?\s*$`)
+	editionTail    = regexp.MustCompile(`(?i)\s*(?:\[[^\]]*(?:DL|電子|Digital)[^\]]*\]|\([^\)]*(?:DL|電子|Digital)[^\)]*\)|(?:特装版|通常版|限定版))\s*$`)
+	spaces         = regexp.MustCompile(`\s+`)
 )
+
+var metadataTags = map[string]struct{}{
+	"一般コミック": {}, "コミック": {}, "漫画": {}, "マンガ": {}, "manga": {},
+	"digital": {}, "電子版": {}, "電子書籍": {}, "dl版": {}, "dl": {}, "raw": {}, "scan": {},
+	"complete": {}, "完結": {}, "web": {},
+}
 
 func Parse(filename string) Result {
 	base := strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename))
 	base = strings.TrimSpace(base)
 	result := Result{Confidence: 0.45}
 
-	if m := authorPrefix.FindStringSubmatchIndex(base); m != nil {
-		result.Author = strings.TrimSpace(base[m[2]:m[3]])
+	// Legacy collections frequently prepend multiple bracket blocks, e.g.
+	// [一般コミック][山田太郎] 作品名 第01巻. Strip well-known metadata tags
+	// and use the last remaining leading bracket as the author/group candidate.
+	var authorCandidates []string
+	for {
+		m := leadingBracket.FindStringSubmatchIndex(base)
+		if m == nil {
+			break
+		}
+		tag := strings.TrimSpace(base[m[2]:m[3]])
 		base = strings.TrimSpace(base[m[1]:])
+		if isMetadataTag(tag) {
+			result.Reasons = append(result.Reasons, "metadata-prefix")
+			continue
+		}
+		authorCandidates = append(authorCandidates, tag)
+	}
+	if len(authorCandidates) > 0 {
+		result.Author = authorCandidates[len(authorCandidates)-1]
 		result.Confidence += 0.12
 		result.Reasons = append(result.Reasons, "author-prefix")
+		// Preserve uncommon extra bracket blocks as part of the title instead of
+		// silently discarding information. The final candidate remains author.
+		if len(authorCandidates) > 1 {
+			base = strings.Join(authorCandidates[:len(authorCandidates)-1], " ") + " " + base
+		}
 	}
 
-	// Remove only well-known edition suffixes. Other bracket text may be part of the title.
 	for {
 		cleaned := editionTail.ReplaceAllString(base, "")
 		cleaned = strings.TrimSpace(cleaned)
@@ -95,6 +121,19 @@ func Parse(filename string) Result {
 	return result
 }
 
+func isMetadataTag(s string) bool {
+	n := strings.ToLower(strings.TrimSpace(s))
+	if _, ok := metadataTags[n]; ok {
+		return true
+	}
+	for tag := range metadataTags {
+		if strings.Contains(n, tag) && (strings.Contains(n, "版") || strings.Contains(n, "comic") || strings.Contains(n, "コミック")) {
+			return true
+		}
+	}
+	return false
+}
+
 func cleanupSeries(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.Trim(s, "-–—_・. ")
@@ -127,7 +166,16 @@ func SafeFolderName(s string) string {
 }
 
 func GroupKey(s string) string {
-	return strings.ToLower(spaces.ReplaceAllString(strings.TrimSpace(s), " "))
+	n := strings.ToLower(strings.TrimSpace(s))
+	n = strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '_', '-', '‐', '‑', '–', '—', '・', '.', '．':
+			return -1
+		default:
+			return r
+		}
+	}, n)
+	return n
 }
 
 func parseDigits(s string) (int, bool) {

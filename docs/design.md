@@ -2,164 +2,149 @@
 
 ## Target
 
-- QNAP TS-253Be (Intel Celeron J3455 / x86_64)
-- 16 GB RAM configuration
-- QPKG installation
+- QNAP TS-253Be / Intel Celeron J3455 / x86_64
+- 16 GB RAM
+- QTS 5.x / QPKG
 - Web UI driven operation
-- Input archives may be 2 GB or larger
+- 2 GB+ ZIP/RAR files are normal inputs
 
 ## Core principles
 
-1. Read once / write once / rename afterwards.
-2. Never fully load an archive or entry into RAM.
+1. **Read once / write once / rename afterwards.**
+2. Never load a complete archive or large entry into RAM.
 3. Avoid intermediate extraction to disk whenever streaming is possible.
-4. Keep the source archive until output verification succeeds.
-5. Prefer metadata-only rename/move on the same filesystem.
-6. Use ZIP64 and 64-bit sizes/offsets.
-7. Nested archives are detected, but are not recursively unpacked by default.
+4. Keep the source archive until the generated output passes verification.
+5. Prefer same-filesystem metadata rename for existing ZIP files.
+6. ZIP64 / 64-bit file sizes are mandatory assumptions.
+7. Nested archives are detected but not recursively unpacked by default.
+8. Logs and temporary files must not create significant write amplification.
 
 ## Archive pipeline
 
-### ZIP input
+### Existing ZIP
 
-If the ZIP already satisfies the target format, do not recompress it. Classification and same-filesystem rename are sufficient.
+Default operation:
 
-When a rewrite is required, prefer raw entry copy where possible instead of inflate + deflate.
+`verify central directory -> create series directory -> rename()`
 
-### RAR input
+The ZIP payload is not recompressed. If source and destination are on different filesystems, docExtractor returns an explicit cross-device error instead of silently copying several GB.
 
-RAR data is decoded as a stream and written directly to the final ZIP `.partial` file. No complete extraction workspace is created.
+### RAR -> ZIP
 
-For already-compressed image formats (JPEG, PNG, WebP, AVIF, HEIC), Fast/Balanced modes may store entries without Deflate to reduce J3455 CPU cost.
+`RAR reader -> bounded RAM buffer -> ZIP writer -> .partial -> verify -> atomic rename -> remove source`
 
-### Nested archive policy
+There is no complete extraction workspace. Stream buffer defaults to 8 MiB/worker and is bounded to 64 MiB. RAR dictionary memory defaults to a 512 MiB/worker limit even though the target NAS has 16 GB RAM.
 
-Archive unwrapping is not recursive extraction.
+Before conversion, the destination filesystem is checked for estimated output space plus safety margin.
 
-Examples:
+### Nested archive fast path
 
-- `book.rar -> images`: stream-convert to ZIP.
-- `book.rar -> book.zip`: extract the inner ZIP as the final artifact and stop.
-- `book.rar -> images + bonus.zip`: preserve `bonus.zip` as an entry.
-- multiple nested archives: preserve by default and show them in preview.
+- `RAR -> images`: stream to ZIP.
+- `RAR -> one ZIP`: unwrap the inner ZIP directly and stop; do not recompress it.
+- `RAR -> images + bonus.zip`: preserve `bonus.zip` as a regular entry.
+- deeper/multiple nested archives: preserve by default; no recursive archive explosion.
 
-This avoids unnecessary data rewriting and prevents accidental archive-expansion explosions.
+## Compression
 
-## Large file and RAM policy
+`fast`: STORE all generated ZIP entries.
 
-2 GB+ files are normal inputs. `io.ReadAll`-style whole-file reads are forbidden in archive paths.
+`balanced` (default): STORE JPEG/PNG/WebP/AVIF/HEIC/GIF and already-compressed archive/media formats; use Deflate BestSpeed for other data.
 
-Per-worker bounded buffers should normally stay in the 16-64 MB range, with optional bounded read-ahead. The 16 GB RAM is primarily left available for QTS/Linux filesystem page cache rather than used as a giant RAM disk.
+`compact`: STORE already-compressed formats and use normal Deflate for other data.
+
+The expected manga workload is already-compressed images, so avoiding redundant Deflate is usually a better use of the J3455 than increasing RAM consumption.
 
 ## Concurrency
 
-Default: `Auto`, initially equivalent to 2 concurrent archive jobs on TS-253Be.
+Default: 2 concurrent jobs. Accepted range: 1-3.
 
-Selectable values: Auto / 1 / 2 / 3.
+The hard limit is intentionally small because J3455 CPU and NAS storage I/O become bottlenecks before 16 GB RAM does. A later auto-tuner may compare aggregate throughput for 1/2/3 workers, but it must not increase concurrency merely because free RAM exists.
 
-The limiting factors are J3455 CPU and storage I/O, not RAM. Auto mode should later use observed throughput and queue pressure to avoid starting a worker when an additional worker reduces aggregate throughput.
+## Filename classification
 
-## Safe output transaction
+Classification is completed before mutation and returns:
 
-1. Analyze source without modification.
-2. Determine final series directory and filename.
-3. Check free-space safety margin.
-4. Write directly to `<final>.partial`.
-5. Close and reopen output.
-6. Verify ZIP structure, entry count, sizes and selected CRC policy.
-7. Atomically rename `.partial` to final name.
-8. Only then remove the source if the configured policy allows it.
-
-A NAS restart or crash must leave either the original source or a clearly identifiable `.partial` file.
-
-## Filename picker
-
-Filename classification is separated from file mutation.
-
-The scanner produces:
-
+- author/group candidate
 - series title
-- volume/chapter number
-- author/group when present
-- edition/special markers
-- confidence score
+- volume number
+- confidence score and reasons
 - proposed destination
 
-The Web UI shows a dry-run preview before execution. Low-confidence classifications are highlighted for manual correction rather than automatically moved.
+Rules currently handle Japanese `第NN巻/卷`, `Vol.N`, `Volume N`, `vN`, numeric tails, full-width digits, common edition suffixes, and common leading metadata tags such as `[一般コミック]` or `[Digital]` before an author tag.
 
-The parser should use layered rules instead of the legacy `]` and `第` substring positions only. Later stages may add normalization dictionaries and learned/fuzzy matching without changing the archive pipeline.
+Low-confidence plans are highlighted in Web UI instead of being automatically executed. `GroupKey` normalization is available for a later sibling-consensus stage without coupling it to archive conversion.
 
-## Web UI
+## Transaction / crash safety
 
-Primary pages:
+1. Analyze source without modification.
+2. Compute final path.
+3. Reject destination collisions.
+4. Check free space for RAR conversion.
+5. Write `<final>.partial` directly in the final directory.
+6. Flush/close and verify generated ZIP.
+7. Rename `.partial` atomically to the final name.
+8. Remove original RAR only after output success.
 
-- Dashboard
-- Scan / Preview
-- Jobs
-- Logs / Diagnostics
-- Settings
+A stale `.partial` can be overwritten on a future retry; it is never considered a library ZIP.
 
-The UI should remain lightweight and require advanced settings only when the user opens them.
+## Web UI / QTS
+
+The QPKG service binds `127.0.0.1:8765` by default and is exposed through QTS HTTP Proxy at `/docExtractor`. The HTTP router accepts both prefixed and prefix-stripped requests to tolerate QTS proxy behavior.
+
+Implemented Web operations:
+
+- scan and dry-run preview
+- confidence/action display
+- safe selection execution
+- explicit execution of review-needed items
+- bounded job queue
+- progress/stage/read/write display
+- cancellation
+- inline job log viewing
+- JSONL job-log download
+- diagnostics ZIP download
+
+No frontend package manager or build chain is required.
 
 ## Logging and diagnostics
 
-Logging is part of the job engine, not console-only output.
+Per-job structured JSONL contains timestamps, stage, component, duration, bytes read/written and error summaries. Progress logging is throttled to stage changes or roughly every 256 MiB.
 
-Each job writes structured JSONL events with fields such as:
+Privacy mode masks token/password/secret fields and reduces path fields to basenames.
 
-- timestamp
-- level
-- job ID
-- component
-- stage (`scan`, `classify`, `rar-read`, `zip-write`, `verify`, `rename`, `cleanup`)
-- duration
-- bytes read/written
-- error summary
+A selected-job diagnostics ZIP includes that job log. A global diagnostics ZIP includes up to ten recent job logs. Safe runtime metadata can include Go/OS/architecture, CPU count, Go memory stats, Linux MemTotal/MemAvailable and QTS version metadata. Archive payloads are never added.
 
-Initial Web API:
+Default retention: 14 days.
 
-- `GET /api/logs/jobs`
-- `GET /api/logs/jobs/{jobID}` (recent events)
-- `GET /api/logs/jobs/{jobID}/download` (JSONL)
-- `GET /api/diagnostics/download?job_id=...` (support ZIP)
+## GitHub Actions cost policy
 
-The support ZIP contains logs and small runtime metadata only. It must never include source archives, extracted pages, or other document payloads.
+- one short Linux CI job; no matrix
+- path filters
+- obsolete runs cancelled by concurrency group
+- no PR build artifacts
+- no npm/frontend build
+- QPKG build only on `v*` tags or manual dispatch
+- tag builds publish directly to GitHub Releases
+- manual QPKG artifact retention: 1 day
+- development changes are batched before branch ref updates to avoid triggering CI for every edited file
 
-### Privacy
+## Current implementation status
 
-Privacy mode redacts secret/token/password fields and reduces path fields to the basename before writing the log. Raw configuration secrets must not be included in diagnostics bundles.
+Implemented on `feat/qpkg-foundation`:
 
-### Retention
+- Go single-binary service
+- ZIP verify/rename fast path
+- streaming RAR -> ZIP conversion
+- single nested-ZIP unwrap fast path
+- bounded memory/dictionary limits
+- free-space preflight
+- path/link safety checks
+- 1-3 worker job queue and cancellation
+- filename classifier with confidence
+- Web control UI
+- JSONL diagnostics and support bundle
+- QTS proxy-aware routing
+- x86_64 QPKG skeleton
+- low-cost CI and release workflow
 
-Default job-log retention is 14 days and should be configurable. Old logs are removed by a low-priority cleanup task.
-
-## Diagnostics bundle roadmap
-
-The support ZIP will include, where safely available:
-
-- selected job JSONL
-- docExtractor version/build commit
-- QTS version
-- QPKG version
-- CPU architecture/core count
-- total/available memory
-- configured worker count
-- archive mode/verification mode
-- free disk space for configured roots
-- recent application startup/shutdown errors
-
-It will not include file contents or secret values.
-
-## Initial implementation status
-
-The `feat/qpkg-foundation` branch contains the first diagnostics foundation:
-
-- Go module
-- structured per-job JSONL log manager
-- retention cleanup hook
-- privacy redaction
-- Web log listing/view/download endpoints
-- diagnostic ZIP generation
-- unit tests for redaction and bundle creation
-
-Next implementation units are the archive stream abstraction, ZIP/RAR handlers, job queue, classifier, Web UI, QPKG packaging, and GitHub Actions build/release workflow.
+Before the first stable release, remaining validation is primarily real QPKG build/install testing and representative real RAR/ZIP fixture testing on the TS-253Be.

@@ -16,6 +16,8 @@ func TestParse(t *testing.T) {
 		{"作品名 v3.rar", "作品名", "", 3, true},
 		{"作品名 07.zip", "作品名", "", 7, true},
 		{"作品名.zip", "作品名", "", 0, false},
+		{"[一般コミック][山田太郎] 作品名 第03巻.zip", "作品名", "山田太郎", 3, true},
+		{"[Digital]【作者】作品名 第04巻.rar", "作品名", "作者", 4, true},
 	}
 	for _, tc := range tests {
 		got := Parse(tc.name)
@@ -28,5 +30,11 @@ func TestParse(t *testing.T) {
 func TestSafeFolderName(t *testing.T) {
 	if got := SafeFolderName(`a/b:c*?`); got != "a b c" {
 		t.Fatalf("unexpected %q", got)
+	}
+}
+
+func TestGroupKeyIgnoresCommonPunctuation(t *testing.T) {
+	if GroupKey("Super-Manga 作品") != GroupKey("super manga・作品") {
+		t.Fatal("expected equivalent group keys")
 	}
 }

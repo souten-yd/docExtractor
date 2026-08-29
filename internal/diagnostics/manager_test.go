@@ -72,3 +72,38 @@ func TestBundleContainsLogAndMetadata(t *testing.T) {
 		t.Fatalf("bundle missing files: log=%v diagnostics=%v", foundLog, foundDiag)
 	}
 }
+
+func TestGlobalBundleContainsTenMostRecentLogs(t *testing.T) {
+	m, err := New(Config{RootDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 12; i++ {
+		id := "job-" + string(rune('a'+i))
+		l, err := m.Job(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := l.Write(Event{Message: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var b bytes.Buffer
+	if err := m.WriteBundle(&b, "", map[string]any{"version": "test"}); err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(b.Bytes()), int64(b.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := 0
+	for _, f := range zr.File {
+		if len(f.Name) > len("logs/") && f.Name[:len("logs/")] == "logs/" {
+			logs++
+		}
+	}
+	if logs != 10 {
+		t.Fatalf("expected 10 recent logs, got %d", logs)
+	}
+}
