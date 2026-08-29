@@ -19,14 +19,16 @@ type Result struct {
 }
 
 var (
-	leadingBracket = regexp.MustCompile(`^\s*[\[【（(]([^\]】）)]+)[\]】）)]\s*`)
-	volumeJP       = regexp.MustCompile(`(?i)\s*第\s*([0-9０-９]{1,4})\s*(?:巻|卷)\b?`)
-	volumeVol      = regexp.MustCompile(`(?i)(?:^|[\s_\-])(?:vol(?:ume)?\.?|v)\s*([0-9０-９]{1,4})(?:\b|$)`)
-	volumeTail     = regexp.MustCompile(`(?:^|[\s_\-])([0-9０-９]{1,3})(?:\s*(?:巻|卷))?(?:\s*(?:特装版|通常版|限定版|完))?\s*$`)
-	editionTail    = regexp.MustCompile(`(?i)\s*(?:\[[^\]]*(?:DL|電子|Digital)[^\]]*\]|\([^\)]*(?:DL|電子|Digital)[^\)]*\)|(?:特装版|通常版|限定版|単行本|コミックス?))\s*$`)
-	chapterTail    = regexp.MustCompile(`(?i)(?:[\s_\-]+)(?:(?:ch(?:apter)?\.?|chap\.?)\s*[0-9０-９]{1,5}|第\s*[0-9０-９]{1,5}\s*話)\s*$`)
-	pageTail       = regexp.MustCompile(`(?i)(?:\s*[-_]?\s*)(?:p|pg|page)\s*0*[0-9０-９]{1,6}(?:\s*[\[【（(][^\]】）)]{1,80}[\]】）)])?\s*$`)
-	spaces         = regexp.MustCompile(`\s+`)
+	volumeJP        = regexp.MustCompile(`(?i)\s*第\s*([0-9０-９]{1,4})\s*(?:巻|卷)\b?`)
+	volumeVol       = regexp.MustCompile(`(?i)(?:^|[\s_\-])(?:vol(?:ume)?\.?|v)\s*([0-9０-９]{1,4})(?:[a-z](?:[0-9]+)?)?(?:\b|$)`)
+	volumeTail      = regexp.MustCompile(`(?:^|[\s_\-])([0-9０-９]{1,3})(?:\s*(?:巻|卷))?(?:\s*(?:特装版|通常版|限定版|完))?\s*$`)
+	volumeRangeTail = regexp.MustCompile(`(?i)(?:\s|^)(?:第\s*)?(?:vol(?:ume)?\.?\s*|v\s*)?[0-9０-９]{1,4}\s*[-~～〜－]\s*[0-9０-９]{1,4}\s*(?:巻|卷)?(?:[a-z](?:[0-9]+)?)?\s*$`)
+	editionTail     = regexp.MustCompile(`(?i)\s*(?:\[[^\]]*(?:DL|電子|Digital)[^\]]*\]|\([^\)]*(?:DL|電子|Digital)[^\)]*\)|(?:特装版|通常版|限定版|単行本|コミックス?))\s*$`)
+	chapterTail     = regexp.MustCompile(`(?i)(?:[\s_\-]+)(?:(?:ch(?:apter)?\.?|chap\.?)\s*[0-9０-９]{1,5}|第\s*[0-9０-９]{1,5}\s*話)\s*$`)
+	pageTail        = regexp.MustCompile(`(?i)(?:\s*[-_]?\s*)(?:p|pg|page)\s*0*[0-9０-９]{1,6}(?:\s*[\[【（(][^\]】）)]{1,80}[\]】）)])?\s*$`)
+	spaces          = regexp.MustCompile(`\s+`)
+	variantBracket  = regexp.MustCompile(`(?i)\s*[\[【（(]\s*(?:フルカラー|カラー|セミカラー|モノクロ|白黒|別スキャン|別scan|別炊|再スキャン|再scan|修正版|修正|fix(?:ed)?|番外編?|外伝|特典|おまけ|bonus|extra|単ページ|見開き(?:結合)?)(?:版)?\s*[\]】）)]\s*$`)
+	variantPlain    = regexp.MustCompile(`(?i)(?:\s|[_\-])+\s*(?:フルカラー版?|カラー版?|セミカラー版?|モノクロ版?|白黒版?|別スキャン|別scan|別炊|再スキャン|再scan|修正版?|fix(?:ed)?|番外編?|外伝|特典|おまけ|bonus|extra|単ページ|見開き(?:結合)?)(?:\s*版)?\s*$`)
 )
 
 var metadataTags = map[string]struct{}{
@@ -51,17 +53,15 @@ func Parse(filename string) Result {
 	result := Result{Confidence: 0.45}
 
 	// Leading bracket blocks are metadata/creator annotations, not title text.
-	// Internal archive candidates often have no extension and creator names may
-	// contain dots (e.g. Y.A), so extension stripping above is deliberately
-	// limited to known archive/image extensions.
+	// Parse each bracket style independently so an author such as
+	// [盧恩＆雪笠(Friendly Land)×早秋] is not broken by parentheses inside [].
 	var authorCandidates []string
 	for {
-		m := leadingBracket.FindStringSubmatchIndex(base)
-		if m == nil {
+		tag, rest, ok := consumeLeadingBracket(base)
+		if !ok {
 			break
 		}
-		tag := strings.TrimSpace(base[m[2]:m[3]])
-		base = strings.TrimSpace(base[m[1]:])
+		base = rest
 		if isMetadataTag(tag) {
 			result.Reasons = append(result.Reasons, "metadata-prefix")
 			continue
@@ -75,12 +75,13 @@ func Parse(filename string) Result {
 	}
 
 	for {
-		cleaned := editionTail.ReplaceAllString(base, "")
-		cleaned = strings.TrimSpace(cleaned)
+		cleaned := strings.TrimSpace(editionTail.ReplaceAllString(base, ""))
+		cleaned = stripSeriesVariantTail(cleaned)
 		if cleaned == base {
 			break
 		}
 		base = cleaned
+		result.Reasons = append(result.Reasons, "edition-or-variant-suffix")
 	}
 
 	// Image/chapter metadata inside old archives must not leak into the series
@@ -118,6 +119,10 @@ func Parse(filename string) Result {
 			result.Confidence += 0.16
 			result.Reasons = append(result.Reasons, "numeric-tail-volume")
 		}
+	} else if loc := volumeRangeTail.FindStringIndex(base); loc != nil {
+		// A range is useful coverage evidence but is not one concrete volume.
+		volumeStart = loc[0]
+		result.Reasons = append(result.Reasons, "volume-range")
 	}
 
 	series := base
@@ -125,6 +130,8 @@ func Parse(filename string) Result {
 		series = base[:volumeStart]
 	}
 	series = cleanupSeries(series)
+	series = stripSeriesVariantTail(series)
+	series = collapseRepeatedSeries(series)
 	if series != "" {
 		result.Series = SafeFolderName(series)
 		result.Confidence += 0.10
@@ -140,6 +147,66 @@ func Parse(filename string) Result {
 		result.Confidence = 0
 	}
 	return result
+}
+
+func consumeLeadingBracket(s string) (tag, rest string, ok bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", s, false
+	}
+	var close rune
+	switch []rune(s)[0] {
+	case '[':
+		close = ']'
+	case '【':
+		close = '】'
+	case '（':
+		close = '）'
+	case '(':
+		close = ')'
+	default:
+		return "", s, false
+	}
+	runes := []rune(s)
+	for i := 1; i < len(runes); i++ {
+		if runes[i] == close {
+			tag = strings.TrimSpace(string(runes[1:i]))
+			if tag == "" {
+				return "", s, false
+			}
+			return tag, strings.TrimSpace(string(runes[i+1:])), true
+		}
+	}
+	return "", s, false
+}
+
+func stripSeriesVariantTail(s string) string {
+	for {
+		before := strings.TrimSpace(s)
+		after := strings.TrimSpace(variantBracket.ReplaceAllString(before, ""))
+		after = strings.TrimSpace(variantPlain.ReplaceAllString(after, ""))
+		if after == before {
+			return after
+		}
+		s = after
+	}
+}
+
+func collapseRepeatedSeries(s string) string {
+	s = strings.TrimSpace(s)
+	// Collapse only an exact duplicated half. This avoids shortening legitimate
+	// repeated words inside a title while fixing "転生したら剣でした 転生したら剣でした".
+	for i, r := range s {
+		if !unicode.IsSpace(r) {
+			continue
+		}
+		left := strings.TrimSpace(s[:i])
+		right := strings.TrimSpace(s[i:])
+		if left != "" && left == right {
+			return left
+		}
+	}
+	return s
 }
 
 func isMetadataTag(s string) bool {
@@ -187,7 +254,9 @@ func SafeFolderName(s string) string {
 }
 
 func GroupKey(s string) string {
-	n := strings.ToLower(strings.TrimSpace(s))
+	n := stripSeriesVariantTail(strings.TrimSpace(s))
+	n = collapseRepeatedSeries(n)
+	n = strings.ToLower(n)
 	n = strings.Map(func(r rune) rune {
 		switch r {
 		case ' ', '\t', '_', '-', '‐', '‑', '–', '—', '・', '.', '．':
