@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/souten-yd/docExtractor/internal/archive"
+	"github.com/souten-yd/docExtractor/internal/classifier"
 )
 
 type Config struct {
@@ -24,21 +25,23 @@ type Organizer struct {
 }
 
 type Plan struct {
-	Name        string   `json:"name"`
-	Source      string   `json:"source"`
-	Destination string   `json:"destination"`
-	Series      string   `json:"series"`
-	Author      string   `json:"author,omitempty"`
-	Volume      int      `json:"volume,omitempty"`
-	HasVolume   bool     `json:"has_volume"`
-	Confidence  float64  `json:"confidence"`
-	NeedsReview bool     `json:"needs_review"`
-	Action      string   `json:"action"`
-	Entries     int      `json:"entries,omitempty"`
-	NameSource  string   `json:"name_source,omitempty"`
-	Evidence    []string `json:"evidence,omitempty"`
-	Candidates  []string `json:"candidates,omitempty"`
-	Error       string   `json:"error,omitempty"`
+	Name           string              `json:"name"`
+	Source         string              `json:"source"`
+	Destination    string              `json:"destination"`
+	Series         string              `json:"series"`
+	Author         string              `json:"author,omitempty"`
+	Volume         int                 `json:"volume,omitempty"`
+	HasVolume      bool                `json:"has_volume"`
+	Coverage       classifier.Coverage `json:"coverage"`
+	Confidence     float64             `json:"confidence"`
+	NeedsReview    bool                `json:"needs_review"`
+	Action         string              `json:"action"`
+	Entries        int                 `json:"entries,omitempty"`
+	NameSource     string              `json:"name_source,omitempty"`
+	Evidence       []string            `json:"evidence,omitempty"`
+	Candidates     []string            `json:"candidates,omitempty"`
+	CandidateCount int                 `json:"candidate_count,omitempty"`
+	Error          string              `json:"error,omitempty"`
 }
 
 func New(cfg Config) (*Organizer, error) {
@@ -146,9 +149,9 @@ func (o *Organizer) planNameAt(root, name string) (Plan, error) {
 	needsReview := parsed.Confidence < o.confidenceThreshold
 	plan := Plan{
 		Name: name, Source: source, Destination: destination, Series: parsed.Series,
-		Author: parsed.Author, Volume: parsed.Volume, HasVolume: parsed.HasVolume,
+		Author: parsed.Author, Volume: parsed.Volume, HasVolume: parsed.HasVolume, Coverage: naming.Coverage,
 		Confidence: parsed.Confidence, NeedsReview: needsReview, Action: action, Entries: entries,
-		NameSource: naming.Source, Evidence: naming.Evidence, Candidates: naming.Candidates,
+		NameSource: naming.Source, Evidence: naming.Evidence, Candidates: naming.Candidates, CandidateCount: naming.CandidateCount,
 	}
 	if _, err := os.Lstat(destination); err == nil {
 		plan.NeedsReview = true
