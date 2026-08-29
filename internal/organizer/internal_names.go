@@ -38,8 +38,11 @@ func inferFromArchive(outerName, filename string) nameEvidence {
 	items := make([]scoredName, 0, len(inspection.Candidates))
 	groups := make(map[string][]int)
 	for _, candidate := range inspection.Candidates {
+		if hasReplacementText(candidate.Name) {
+			continue
+		}
 		parsed := classifier.Parse(candidate.Name)
-		if parsed.Series == "" || parsed.Series == "Unknown" {
+		if !seriesNameUsable(parsed.Series) {
 			continue
 		}
 		score := parsed.Confidence + kindBonus(candidate.Kind)
@@ -73,7 +76,15 @@ func inferFromArchive(outerName, filename string) nameEvidence {
 	}
 	groupKey := classifier.GroupKey(winner.parsed.Series)
 	winnerGroup := groups[groupKey]
-	if winner.score < outer.Confidence+0.08 && !containsJapanese(winner.name) && len(winnerGroup) < 2 {
+
+	// A single image filename is weak evidence. Names such as
+	// "終わりのセラフ 20 - p007 [scan-group]" used to become a folder name.
+	// Prefer the outer archive name unless multiple image entries independently
+	// agree on the parsed series.
+	if winner.kind == archive.CandidateNamedImage && len(winnerGroup) < 2 && seriesNameUsable(outer.Series) {
+		return best
+	}
+	if winner.score < outer.Confidence+0.08 && !containsJapanese(winner.name) && len(winnerGroup) < 2 && seriesNameUsable(outer.Series) {
 		return best
 	}
 

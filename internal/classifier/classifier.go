@@ -23,7 +23,9 @@ var (
 	volumeJP       = regexp.MustCompile(`(?i)\s*第\s*([0-9０-９]{1,4})\s*(?:巻|卷)\b?`)
 	volumeVol      = regexp.MustCompile(`(?i)(?:^|[\s_\-])(?:vol(?:ume)?\.?|v)\s*([0-9０-９]{1,4})(?:\b|$)`)
 	volumeTail     = regexp.MustCompile(`(?:^|[\s_\-])([0-9０-９]{1,3})(?:\s*(?:巻|卷))?(?:\s*(?:特装版|通常版|限定版|完))?\s*$`)
-	editionTail    = regexp.MustCompile(`(?i)\s*(?:\[[^\]]*(?:DL|電子|Digital)[^\]]*\]|\([^\)]*(?:DL|電子|Digital)[^\)]*\)|(?:特装版|通常版|限定版))\s*$`)
+	editionTail    = regexp.MustCompile(`(?i)\s*(?:\[[^\]]*(?:DL|電子|Digital)[^\]]*\]|\([^\)]*(?:DL|電子|Digital)[^\)]*\)|(?:特装版|通常版|限定版|単行本|コミックス?))\s*$`)
+	chapterTail    = regexp.MustCompile(`(?i)(?:[\s_\-]+)(?:(?:ch(?:apter)?\.?|chap\.?)\s*[0-9０-９]{1,5}|第\s*[0-9０-９]{1,5}\s*話)\s*$`)
+	pageTail       = regexp.MustCompile(`(?i)(?:\s*[-_]?\s*)(?:p|pg|page)\s*0*[0-9０-９]{1,6}(?:\s*[\[【（(][^\]】）)]{1,80}[\]】）)])?\s*$`)
 	spaces         = regexp.MustCompile(`\s+`)
 )
 
@@ -79,6 +81,19 @@ func Parse(filename string) Result {
 			break
 		}
 		base = cleaned
+	}
+
+	// Image/chapter metadata inside old archives must not leak into the series
+	// folder name. Keep the original string for ParseCoverage callers; Parse
+	// itself only removes trailing evidence noise before finding the volume.
+	for {
+		cleaned := strings.TrimSpace(pageTail.ReplaceAllString(base, ""))
+		cleaned = strings.TrimSpace(chapterTail.ReplaceAllString(cleaned, ""))
+		if cleaned == base {
+			break
+		}
+		base = cleaned
+		result.Reasons = append(result.Reasons, "trailing-page-or-chapter-metadata")
 	}
 
 	var volumeStart = -1
