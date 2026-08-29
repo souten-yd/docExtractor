@@ -24,20 +24,31 @@ QPKG 起動後、QTS のアプリ画面から開きます。QTS HTTP Proxy 経�
 
 Web UI から以下を実行できます。
 
+- 処理対象フォルダの設定・保存
+- `/share` 配下を辿るフォルダピッカー
 - 対象フォルダのスキャン
 - シリーズ名・巻数・信頼度・予定処理の確認
 - 安全判定されたファイルだけ実行
 - 低信頼度ファイルを含めた明示実行
-- ジョブ進捗、read/write 量、処理 stage の確認
+- ジョブ進捗、処理 stage、worker、待ち時間、経過時間の確認
+- ジョブ別 Read / Write / 合計実効 I/O (MiB/s) の確認
+- 実行中 / 待機 / 成功 / 失敗、現在速度、完了ジョブ平均速度のサマリー表示
+- NAS の 1 分 load average / CPU 数、空き RAM の簡易表示
 - 実行中ジョブのキャンセル
 - ジョブログの画面表示 / JSONL ダウンロード
 - ジョブ単位または全体の診断 ZIP ダウンロード
 
-## ログ / デバッグ
+保存した対象フォルダは即時反映され、QPKG 再起動・アップデート後も `/etc/config/docExtractor.settings.json` から復元されます。Web UI から設定できる範囲は `/share` 配下に制限します。
 
-ジョブログは JSONL 形式で保存します。ログ書き込み自体が I/O 負荷にならないよう、進捗は stage 変更時または約 256 MiB ごとに記録します。
+## 速度計測 / ログ / デバッグ
 
-診断 ZIP にはアーカイブ本体や画像を入れません。安全な範囲で、直近ジョブログ、docExtractor/Go/OS 情報、QTS 情報、メモリ情報などを格納します。パスは basename 化し、token/password/secret 系フィールドはマスクします。ジョブログの標準保持期間は 14 日です。
+速度調整は Web UI だけで判断できるよう、ジョブ開始からの平均 Read / Write / 合計 I/O MiB/s と経過時間を表示します。ZIP の `rename()` のみで完了するジョブは大容量ファイルでも実データを書き直さないため、速度集計から除外します。
+
+ジョブログは JSONL 形式です。ログ書き込み自体が I/O 負荷にならないよう、通常の progress は stage 変更時または約 256 MiB ごとに記録します。加えて、各 stage の完了時には所要時間、Read / Write 量、stage 実効 I/O MiB/s を記録します。最終イベントには処理方式（`rar-to-zip` / `unwrap-nested-zip` / `rename-zip`）、entry 数、総所要時間、平均速度が入ります。
+
+診断 ZIP にはアーカイブ本体や画像を入れません。安全な範囲で、直近ジョブログ、docExtractor/Go/OS 情報、QTS 情報、メモリ情報、対象ストレージ空き容量などを格納します。パスは basename 化し、token/password/secret 系フィールドはマスクします。ジョブログの標準保持期間は 14 日です。
+
+実機の並列数を決める際は、同じデータセットで worker=1 と worker=2 を比較し、Web UI の完了ジョブ平均 I/O と NAS load を確認してください。TS-253Be では 16 GB RAM より J3455 CPU / ストレージ I/O が先に上限になる想定です。
 
 ## QPKG 設定
 
@@ -62,9 +73,9 @@ QPKG では Web サービスを localhost のみに bind し、QTS Proxy から�
 
 ## GitHub Actions / コスト方針
 
-通常の PR は Linux 1 ジョブだけで `go test ./...` と `go vet ./...` を実行します。OS/Go matrix、npm build、PR artifact は使いません。同じブランチの古い CI は自動キャンセルします。
+通常の PR は Linux 1 ジョブだけで `go test ./...`、`go vet ./...`、静的 x86_64 build を実行します。OS/Go matrix、npm build、PR artifact は使いません。同じブランチの古い CI は自動キャンセルします。
 
-QPKG の生成は **`v*` タグまたは手動実行時だけ**です。タグ時は QPKG を GitHub Release に直接添付し、Actions Artifact を重複保存しません。手動ビルドの Artifact は 1 日で削除します。
+QPKG の生成は **リリース、明示した PR 検証、または手動実行時だけ**です。Release 時は QPKG を GitHub Release に直接添付し、Actions Artifact を重複保存しません。PR/手動ビルドの Artifact は 1 日で削除します。
 
 詳細は [`docs/ci-cost.md`](docs/ci-cost.md) を参照してください。
 
