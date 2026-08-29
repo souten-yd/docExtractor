@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/souten-yd/docExtractor/internal/archive"
-	"github.com/souten-yd/docExtractor/internal/classifier"
 )
 
 type Config struct {
@@ -25,18 +24,21 @@ type Organizer struct {
 }
 
 type Plan struct {
-	Name        string  `json:"name"`
-	Source      string  `json:"source"`
-	Destination string  `json:"destination"`
-	Series      string  `json:"series"`
-	Author      string  `json:"author,omitempty"`
-	Volume      int     `json:"volume,omitempty"`
-	HasVolume   bool    `json:"has_volume"`
-	Confidence  float64 `json:"confidence"`
-	NeedsReview bool    `json:"needs_review"`
-	Action      string  `json:"action"`
-	Entries     int     `json:"entries,omitempty"`
-	Error       string  `json:"error,omitempty"`
+	Name        string   `json:"name"`
+	Source      string   `json:"source"`
+	Destination string   `json:"destination"`
+	Series      string   `json:"series"`
+	Author      string   `json:"author,omitempty"`
+	Volume      int      `json:"volume,omitempty"`
+	HasVolume   bool     `json:"has_volume"`
+	Confidence  float64  `json:"confidence"`
+	NeedsReview bool     `json:"needs_review"`
+	Action      string   `json:"action"`
+	Entries     int      `json:"entries,omitempty"`
+	NameSource  string   `json:"name_source,omitempty"`
+	Evidence    []string `json:"evidence,omitempty"`
+	Candidates  []string `json:"candidates,omitempty"`
+	Error       string   `json:"error,omitempty"`
 }
 
 func New(cfg Config) (*Organizer, error) {
@@ -93,9 +95,7 @@ func (o *Organizer) Scan() ([]Plan, error) {
 	return plans, nil
 }
 
-func (o *Organizer) PlanName(name string) (Plan, error) {
-	return o.planNameAt(o.Root(), name)
-}
+func (o *Organizer) PlanName(name string) (Plan, error) { return o.planNameAt(o.Root(), name) }
 
 func (o *Organizer) planNameAt(root, name string) (Plan, error) {
 	if filepath.Base(name) != name || name == "." || name == ".." {
@@ -120,7 +120,8 @@ func (o *Organizer) planNameAt(root, name string) (Plan, error) {
 		return Plan{}, errors.New("source is not a regular archive")
 	}
 
-	parsed := classifier.Parse(name)
+	naming := inferFromArchive(name, source)
+	parsed := naming.Parsed
 	outName := name
 	action := "rename-zip"
 	entries := 0
@@ -143,21 +144,20 @@ func (o *Organizer) planNameAt(root, name string) (Plan, error) {
 	}
 	destination := filepath.Join(seriesDir, outName)
 	needsReview := parsed.Confidence < o.confidenceThreshold
-	if _, err := os.Lstat(destination); err == nil {
-		return Plan{
-			Name: name, Source: source, Destination: destination, Series: parsed.Series,
-			Author: parsed.Author, Volume: parsed.Volume, HasVolume: parsed.HasVolume,
-			Confidence: parsed.Confidence, NeedsReview: true, Action: action, Entries: entries,
-			Error: "destination already exists",
-		}, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return Plan{}, err
-	}
-	return Plan{
+	plan := Plan{
 		Name: name, Source: source, Destination: destination, Series: parsed.Series,
 		Author: parsed.Author, Volume: parsed.Volume, HasVolume: parsed.HasVolume,
 		Confidence: parsed.Confidence, NeedsReview: needsReview, Action: action, Entries: entries,
-	}, nil
+		NameSource: naming.Source, Evidence: naming.Evidence, Candidates: naming.Candidates,
+	}
+	if _, err := os.Lstat(destination); err == nil {
+		plan.NeedsReview = true
+		plan.Error = "destination already exists"
+		return plan, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Plan{}, err
+	}
+	return plan, nil
 }
 
 func normalizeRoot(root string) (string, error) {
