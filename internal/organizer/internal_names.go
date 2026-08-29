@@ -2,7 +2,7 @@ package organizer
 
 import (
 	"math"
-	"strings"
+	"strconv"
 	"unicode"
 
 	"github.com/souten-yd/docExtractor/internal/archive"
@@ -44,15 +44,13 @@ func inferFromArchive(outerName, filename string) nameEvidence {
 		}
 		idx := len(items)
 		items = append(items, scoredName{parsed: parsed, kind: candidate.Kind, name: candidate.Name, score: score})
-		groups[classifier.GroupKey(parsed.Series)] = append(groups[classifier.GroupKey(parsed.Series)], idx)
+		key := classifier.GroupKey(parsed.Series)
+		groups[key] = append(groups[key], idx)
 	}
 	if len(items) == 0 {
 		return best
 	}
 
-	// Consensus is important for archives containing one nested archive per
-	// volume. Repeated normalized series names are stronger evidence than any
-	// single filename, and Japanese candidates are preferred when equivalent.
 	for _, indexes := range groups {
 		if len(indexes) < 2 {
 			continue
@@ -69,23 +67,36 @@ func inferFromArchive(outerName, filename string) nameEvidence {
 			winner = item
 		}
 	}
-	// Internal metadata must beat the outer filename by a useful margin unless
-	// it carries Japanese title evidence or multi-entry consensus.
-	outerScore := outer.Confidence
-	if winner.score < outerScore+0.08 && !containsJapanese(winner.name) && len(groups[classifier.GroupKey(winner.parsed.Series)]) < 2 {
+	groupKey := classifier.GroupKey(winner.parsed.Series)
+	winnerGroup := groups[groupKey]
+	if winner.score < outer.Confidence+0.08 && !containsJapanese(winner.name) && len(winnerGroup) < 2 {
 		return best
 	}
 
 	parsed := winner.parsed
 	parsed.Confidence = math.Min(0.99, math.Max(parsed.Confidence, math.Min(0.99, winner.score)))
-	if outer.HasVolume && !parsed.HasVolume && classifier.GroupKey(outer.Series) == classifier.GroupKey(parsed.Series) {
+
+	// If multiple internal entries clearly represent different volumes, the
+	// enclosing archive is a collection. Use those names for the series but do
+	// not misleadingly label the whole outer archive as the first volume.
+	volumes := make(map[int]struct{})
+	for _, idx := range winnerGroup {
+		if items[idx].parsed.HasVolume {
+			volumes[items[idx].parsed.Volume] = struct{}{}
+		}
+	}
+	multiVolume := len(volumes) > 1
+	if multiVolume {
+		parsed.Volume = 0
+		parsed.HasVolume = false
+	} else if outer.HasVolume && !parsed.HasVolume && classifier.GroupKey(outer.Series) == groupKey {
 		parsed.Volume = outer.Volume
 		parsed.HasVolume = true
 	}
 
 	candidateNames := make([]string, 0, 6)
 	for _, item := range items {
-		if classifier.GroupKey(item.parsed.Series) != classifier.GroupKey(winner.parsed.Series) {
+		if classifier.GroupKey(item.parsed.Series) != groupKey {
 			continue
 		}
 		candidateNames = appendUnique(candidateNames, item.name, 6)
@@ -97,8 +108,11 @@ func inferFromArchive(outerName, filename string) nameEvidence {
 	if containsJapanese(winner.name) {
 		evidence = append(evidence, "Japanese title preferred")
 	}
-	if n := len(groups[classifier.GroupKey(winner.parsed.Series)]); n >= 2 {
-		evidence = append(evidence, "consensus from "+itoaSmall(n)+" entries")
+	if len(winnerGroup) >= 2 {
+		evidence = append(evidence, "consensus from "+strconv.Itoa(len(winnerGroup))+" entries")
+	}
+	if multiVolume {
+		evidence = append(evidence, "multiple volumes detected")
 	}
 	return nameEvidence{Parsed: parsed, Source: string(winner.kind), Evidence: evidence, Candidates: candidateNames}
 }
@@ -146,11 +160,4 @@ func appendUnique(dst []string, s string, limit int) []string {
 		return append(dst, s)
 	}
 	return dst
-}
-
-func itoaSmall(n int) string {
-	if n >= 0 && n <= 9 {
-		return string(rune('0' + n))
-	}
-	return strings.Repeat("+", 0) + "many"
 }
