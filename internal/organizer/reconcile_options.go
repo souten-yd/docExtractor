@@ -23,7 +23,12 @@ func inQuarantine(root, path string) bool {
 	return len(parts) > 0 && parts[0] == ".docExtractor-duplicates"
 }
 
-func parentSeriesEvidence(root, path, inferred string, confidence, threshold float64) (string, float64) {
+// parentSeriesEvidence treats the archive filename as the source of truth for
+// already-processed libraries. A parent folder may improve display spelling only
+// when it independently agrees with that filename. Unrelated legacy buckets such
+// as "net", "Met", "Screenshot", "単ページ", or old volume folders must never
+// override a usable filename merely because its confidence score is lower.
+func parentSeriesEvidence(root, path, inferred string, confidence, _ float64) (string, float64) {
 	parent := filepath.Base(filepath.Dir(path))
 	if filepath.Dir(path) == root || parent == "." || parent == "" || parent == ".docExtractor-duplicates" || !seriesNameUsable(parent) {
 		return inferred, confidence
@@ -40,11 +45,8 @@ func parentSeriesEvidence(root, path, inferred string, confidence, threshold flo
 			if confidence < .90 {
 				confidence = .90
 			}
-			return inferred, confidence
 		}
+		return inferred, confidence
 	}
-	if !seriesNameUsable(inferred) || confidence < threshold {
-		return parent, .78
-	}
-	return inferred, confidence
+	return parent, .78
 }

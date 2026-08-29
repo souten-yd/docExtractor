@@ -26,11 +26,14 @@ type scoredName struct {
 	score    float64
 }
 
+// inferFromArchive is used only by the archive-processing workflow. It walks
+// embedded ZIP/RAR archives recursively so a meaningful Japanese title hidden
+// below one or more wrapper archives can still be used for naming.
 func inferFromArchive(outerName, filename string) nameEvidence {
 	outer := classifier.Parse(outerName)
 	outerCoverage := classifier.ParseCoverage(outerName)
 	best := nameEvidence{Parsed: outer, Coverage: outerCoverage, Source: "outer-filename", Evidence: []string{"outer filename"}}
-	inspection, err := archive.InspectNames(filename)
+	inspection, err := archive.InspectNamesRecursive(filename)
 	if err != nil || len(inspection.Candidates) == 0 {
 		return best
 	}
@@ -47,7 +50,9 @@ func inferFromArchive(outerName, filename string) nameEvidence {
 		}
 		score := parsed.Confidence + kindBonus(candidate.Kind)
 		if containsJapanese(candidate.Name) {
-			score += 0.16
+			// Japanese titles are expected for this library. Give them a strong
+			// preference, while seriesNameUsable still filters generic/page names.
+			score += 0.34
 		}
 		idx := len(items)
 		items = append(items, scoredName{parsed: parsed, coverage: classifier.ParseCoverage(candidate.Name), kind: candidate.Kind, name: candidate.Name, score: score})
@@ -62,7 +67,7 @@ func inferFromArchive(outerName, filename string) nameEvidence {
 		if len(indexes) < 2 {
 			continue
 		}
-		bonus := math.Min(0.22, 0.07*float64(len(indexes)-1))
+		bonus := math.Min(0.24, 0.08*float64(len(indexes)-1))
 		for _, idx := range indexes {
 			items[idx].score += bonus
 		}
@@ -78,9 +83,8 @@ func inferFromArchive(outerName, filename string) nameEvidence {
 	winnerGroup := groups[groupKey]
 
 	// A single image filename is weak evidence. Names such as
-	// "終わりのセラフ 20 - p007 [scan-group]" used to become a folder name.
-	// Prefer the outer archive name unless multiple image entries independently
-	// agree on the parsed series.
+	// "終わりのセラフ 20 - p007 [scan-group]" must not become a folder name
+	// unless multiple image entries independently agree.
 	if winner.kind == archive.CandidateNamedImage && len(winnerGroup) < 2 && seriesNameUsable(outer.Series) {
 		return best
 	}
@@ -128,7 +132,7 @@ func inferFromArchive(outerName, filename string) nameEvidence {
 		candidateNames = append(candidateNames, winner.name)
 		candidateCount = 1
 	}
-	evidence := []string{string(winner.kind), "archive metadata"}
+	evidence := []string{string(winner.kind), "recursive archive metadata"}
 	if containsJapanese(winner.name) {
 		evidence = append(evidence, "Japanese title preferred")
 	}
@@ -142,7 +146,7 @@ func inferFromArchive(outerName, filename string) nameEvidence {
 		evidence = append(evidence, "chapter coverage detected")
 	}
 	if inspection.Truncated {
-		evidence = append(evidence, "metadata scan truncated at safety limit")
+		evidence = append(evidence, "recursive metadata scan truncated at safety limit")
 	}
 	return nameEvidence{Parsed: parsed, Coverage: coverage, Source: string(winner.kind), Evidence: evidence, Candidates: candidateNames, CandidateCount: candidateCount}
 }

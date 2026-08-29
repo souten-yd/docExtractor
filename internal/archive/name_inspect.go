@@ -42,9 +42,9 @@ type NameInspection struct {
 
 func InspectNames(filename string) (NameInspection, error) {
 	switch strings.ToLower(filepath.Ext(filename)) {
-	case ".zip":
+	case ".zip", ".cbz":
 		return inspectZIPNames(filename)
-	case ".rar":
+	case ".rar", ".cbr":
 		return inspectRARNames(filename)
 	default:
 		return NameInspection{}, errors.New("unsupported archive for name inspection")
@@ -90,11 +90,11 @@ func inspectRARNames(filename string) (NameInspection, error) {
 }
 
 type nameCollector struct {
-	out         NameInspection
-	seen        map[string]struct{}
-	topDirs     map[string]struct{}
-	candidate   []NameCandidate
-	imageCount  int
+	out        NameInspection
+	seen       map[string]struct{}
+	topDirs    map[string]struct{}
+	candidate  []NameCandidate
+	imageCount int
 }
 
 func newNameCollector() *nameCollector {
@@ -122,7 +122,7 @@ func (c *nameCollector) add(raw string, isDir bool) {
 	}
 	base := path.Base(name)
 	ext := strings.ToLower(path.Ext(base))
-	if ext == ".zip" || ext == ".rar" {
+	if ext == ".zip" || ext == ".rar" || ext == ".cbz" || ext == ".cbr" {
 		c.push(strings.TrimSuffix(base, path.Ext(base)), CandidateNestedArchive)
 		return
 	}
@@ -133,7 +133,7 @@ func (c *nameCollector) add(raw string, isDir bool) {
 				c.imageCount++
 			}
 		}
-	}
+}
 }
 
 func (c *nameCollector) finish() NameInspection {
@@ -174,7 +174,8 @@ func usefulDirectoryName(s string) bool {
 		return false
 	}
 	switch n {
-	case "image", "images", "img", "imgs", "page", "pages", "scan", "scans", "jpg", "jpeg", "png", "webp", "book", "comic", "manga", "__macosx":
+	case "image", "images", "img", "imgs", "page", "pages", "scan", "scans", "jpg", "jpeg", "png", "webp", "book", "comic", "manga", "__macosx",
+		"単ページ", "見開き", "見開きページ", "ページ", "画像", "画像ファイル", "表紙", "カバー", "スクリーンショット", "screenshot", "preview", "previews", "sample", "samples", "raw", "source":
 		return false
 	}
 	return !numericLike(n)
