@@ -10,9 +10,10 @@ QNAP NAS 上で漫画・ドキュメント系アーカイブを、**中間展開
 - ファイル名から作者・シリーズ名・巻数を推定し、実行前に Web UI でプレビュー
 - 正常な ZIP は**再圧縮せず**、同一ファイルシステム上の `rename()` だけでシリーズフォルダへ整理
 - RAR はディスクへ全展開せず、固定 RAM バッファで **RAR decoder -> ZIP writer** をストリーミング
-- RAR の中身が ZIP 1 個だけなら、その ZIP を直接取り出して終了（再圧縮なし）
-- RAR 内に画像と ZIP が混在する場合、内側 ZIP は通常ファイルとして保持し、再帰展開しない
-- 出力は `<name>.zip.partial` に作成し、検証後に atomic rename。その後にのみ元 RAR を削除
+- ZIP/RAR 内の ZIP/RAR/CBZ/CBR は再帰的に正規化し、最終 ZIP 内に入れ子アーカイブを残さない
+- 再帰正規化後の最上位フォルダごとに ZIP を分割するため、複数巻入りアーカイブは原則 1 巻 1 ZIP になる
+- dry-run は内包アーカイブまで読み取り、実行時と同じ最終分割先を表示する
+- 出力は各 `<name>.zip.partial` に作成し、全出力の検証後に atomic rename。その後にのみ元 RAR を削除
 - 既圧縮画像（JPEG/PNG/WebP/AVIF 等）は ZIP STORE を優先して J3455 の CPU 負荷を抑制
 - 2 worker を標準、実装上は 1～3 worker に制限
 - 1 worker あたりの RAR dictionary は標準 512 MiB 上限、ストリームバッファは標準 8 MiB
@@ -62,7 +63,7 @@ Web UI から以下を実行できます。
 
 速度調整は Web UI だけで判断できるよう、ジョブ開始からの平均 Read / Write / 合計 I/O MiB/s と経過時間を表示します。ZIP の `rename()` のみで完了するジョブは大容量ファイルでも実データを書き直さないため、速度集計から除外します。
 
-ジョブログは JSONL 形式です。ログ書き込み自体が I/O 負荷にならないよう、通常の progress は stage 変更時または約 256 MiB ごとに記録します。加えて、各 stage の完了時には所要時間、Read / Write 量、stage 実効 I/O MiB/s を記録します。最終イベントには処理方式（`rar-to-zip` / `unwrap-nested-zip` / `rename-zip`）、entry 数、総所要時間、平均速度が入ります。
+ジョブログは JSONL 形式です。ログ書き込み自体が I/O 負荷にならないよう、通常の progress は stage 変更時または約 256 MiB ごとに記録します。加えて、各 stage の完了時には所要時間、Read / Write 量、stage 実効 I/O MiB/s を記録します。最終イベントには処理方式（再帰正規化・フォルダ分割・ZIP rename/copy など）、entry 数、総所要時間、平均速度が入ります。
 
 診断 ZIP にはアーカイブ本体や画像を入れません。安全な範囲で、直近ジョブログ、docExtractor/Go/OS 情報、QTS 情報、メモリ情報、対象ストレージ空き容量などを格納します。パスは basename 化し、token/password/secret 系フィールドはマスクします。ジョブログの標準保持期間は 14 日です。
 

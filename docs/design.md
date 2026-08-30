@@ -16,7 +16,7 @@
 4. Keep the source archive until the generated output passes verification.
 5. Prefer same-filesystem metadata rename for existing ZIP files.
 6. ZIP64 / 64-bit file sizes are mandatory assumptions.
-7. Nested archives are detected but not recursively unpacked by default.
+7. Nested ZIP/RAR/CBZ/CBR archives are recursively normalized; published ZIPs must not contain nested archives.
 8. Logs and temporary files must not create significant write amplification.
 
 ## Archive pipeline
@@ -37,12 +37,14 @@ There is no complete extraction workspace. Stream buffer defaults to 8 MiB/worke
 
 Before conversion, the destination filesystem is checked for estimated output space plus safety margin.
 
-### Nested archive fast path
+### Recursive archive normalization
 
-- `RAR -> images`: stream to ZIP.
-- `RAR -> one ZIP`: unwrap the inner ZIP directly and stop; do not recompress it.
-- `RAR -> images + bonus.zip`: preserve `bonus.zip` as a regular entry.
-- deeper/multiple nested archives: preserve by default; no recursive archive explosion.
+- `ZIP/RAR -> images`: retain image/file entries in the normalized ZIP.
+- `ZIP/RAR -> nested ZIP/RAR/CBZ/CBR`: spool only the embedded archive payload, recurse, and remove the archive layer.
+- Multiple volume folders or nested volume archives become one verified ZIP per top-level normalized folder.
+- The dry-run follows the same metadata/grouping rules and reports the final predicted ZIP targets.
+- Depth, archive-count, entry-count, and expanded-byte limits stop malformed archives and archive bombs.
+- Nested 7z is rejected because the QPKG cannot decode it; it is never silently left in a published ZIP.
 
 ## Compression
 
@@ -135,7 +137,7 @@ Implemented on `feat/qpkg-foundation`:
 - Go single-binary service
 - ZIP verify/rename fast path
 - streaming RAR -> ZIP conversion
-- single nested-ZIP unwrap fast path
+- recursive ZIP/RAR/CBZ/CBR normalization and per-folder splitting
 - bounded memory/dictionary limits
 - free-space preflight
 - path/link safety checks
