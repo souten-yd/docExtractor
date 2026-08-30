@@ -23,7 +23,7 @@ type Server struct { Organizer *organizer.Organizer; Jobs *jobs.Manager; Diagnos
 type submitRequest struct { Names []string `json:"names"`; AllowReview bool `json:"allow_review"` }
 
 func (s *Server) Handler() http.Handler {
-	mux:=http.NewServeMux();mux.HandleFunc("GET /",s.index);mux.HandleFunc("GET /api/status",s.status);mux.HandleFunc("GET /api/settings",s.getSettings);mux.HandleFunc("PUT /api/settings",s.updateSettings);mux.HandleFunc("GET /api/directories",s.listDirectories)
+	mux:=http.NewServeMux();mux.HandleFunc("GET /",s.index);mux.HandleFunc("GET /api/status",s.status);mux.HandleFunc("GET /api/settings",s.getSettings);mux.HandleFunc("PUT /api/settings",s.updateSettings);mux.HandleFunc("GET /api/directories",s.listDirectories);mux.HandleFunc("GET /api/layout/export",s.folderLayoutExport)
 	mux.HandleFunc("GET /api/aliases",s.listAliases);mux.HandleFunc("POST /api/aliases",s.saveAlias);mux.HandleFunc("DELETE /api/aliases",s.deleteAlias)
 	mux.HandleFunc("POST /api/scan",s.scan);mux.HandleFunc("GET /api/jobs",s.listJobs);mux.HandleFunc("GET /api/jobs/{jobID}",s.getJob);mux.HandleFunc("POST /api/jobs",s.submitJobs);mux.HandleFunc("POST /api/jobs/{jobID}/cancel",s.cancelJob)
 	mux.HandleFunc("POST /api/reconcile/scan",s.reconcileScan);mux.HandleFunc("POST /api/reconcile/execute",s.reconcileExecute)
