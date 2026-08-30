@@ -83,6 +83,18 @@ func PreviewOutputTargets(source, defaultDst string) (OutputPreview, error) {
 	return OutputPreview{Targets: targets, Groups: groups, Nested: nested, Warning: previewWarning(nested)}, nil
 }
 
+// PreviewOutputTargetsFromGroups rebuilds output paths from grouping metadata
+// collected by PreviewOutputTargets. It performs no archive I/O, so callers can
+// safely refresh destinations after series clustering without reopening source
+// archives.
+func PreviewOutputTargetsFromGroups(defaultDst string, groups []string, nested bool) OutputPreview {
+	targets := make([]string, 0, len(groups))
+	for _, group := range groups {
+		targets = append(targets, outputForFolder(defaultDst, group))
+	}
+	return OutputPreview{Targets: targets, Groups: append([]string(nil), groups...), Nested: nested, Warning: previewWarning(nested)}
+}
+
 func previewArchivePath(filename, prefix string, depth int, state *outputPreviewState) error {
 	if depth > previewMaxNestedDepth {
 		return fmt.Errorf("nested archive depth exceeds preview limit %d", previewMaxNestedDepth)
