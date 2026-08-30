@@ -46,6 +46,33 @@ func TestParseExistingFilenameUnifiesSimpleVariantsWithMainSeries(t *testing.T) 
 	}
 }
 
+func TestParseExistingFilenameHandlesUnicodeSpaceBeforeBareVolume(t *testing.T) {
+	cases := []struct {
+		name   string
+		volume int
+	}{
+		{"[井上淳哉×白土晴一] 怪獣自衛隊　1巻 別スキャン.zip", 1},
+		{"[井上淳哉×白土晴一] 怪獣自衛隊　2巻　別スキャン.zip", 2},
+		{"[井上淳哉×白土晴一] 怪獣自衛隊　3巻 カラー版.zip", 3},
+		{"[井上淳哉×白土晴一] 怪獣自衛隊　4巻 fix.zip", 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ParseExistingFilename(tc.name)
+			if got.Series != "怪獣自衛隊" || !got.HasVolume || got.Volume != tc.volume {
+				t.Fatalf("unexpected parse: %+v", got)
+			}
+		})
+	}
+}
+
+func TestParseExistingFilenameHandlesVariantBeforeUnicodeSpaceVolume(t *testing.T) {
+	got := ParseExistingFilename("[作者] 作品名 別スキャン　5巻.zip")
+	if got.Series != "作品名" || !got.HasVolume || got.Volume != 5 {
+		t.Fatalf("unexpected parse: %+v", got)
+	}
+}
+
 func TestParseExistingFilenameHandlesNestedAuthorParentheses(t *testing.T) {
 	got := ParseExistingFilename("[盧恩＆雪笠(Friendly Land)×早秋] 塔の管理をしてみよう 第02巻.zip")
 	if got.Series != "塔の管理をしてみよう" || !got.HasVolume || got.Volume != 2 {

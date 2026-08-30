@@ -15,10 +15,13 @@ import (
 // are removed from the series identity, so color/alternate scans/extra chapters
 // are kept with the main series.
 var (
-	existingVolumeVol  = regexp.MustCompile(`(?i)(?:^|[\s_\-])(?:vol(?:ume)?\.?|v)\s*([0-9０-９]{1,4})(?:\b|$)`)
-	existingVolumeTail = regexp.MustCompile(`(?:^|[\s_\-])([0-9０-９]{1,3})(?:\s*(?:巻|卷))?(?:\s*(?:特装版|通常版|限定版|完))?\s*$`)
-	existingVariantBracket = regexp.MustCompile(`(?i)\s*[\[【（(]\s*(?:フルカラー|カラー|セミカラー|モノクロ|白黒|別スキャン|別scan|別炊|再スキャン|再scan|修正版?|fix(?:ed)?|番外編?|外伝|特典|おまけ|bonus|extra|単ページ|見開き(?:結合)?)(?:版)?\s*[\]】）)]\s*$`)
-	existingVariantPlain = regexp.MustCompile(`(?i)(?:\s|[_\-])+\s*(?:フルカラー版?|カラー版?|セミカラー版?|モノクロ版?|白黒版?|別スキャン|別scan|別炊|再スキャン|再scan|修正版?|fix(?:ed)?|番外編?|外伝|特典|おまけ|bonus|extra|単ページ|見開き(?:結合)?)(?:\s*版)?\s*$`)
+	// Go regexp's \s is ASCII-only. Existing libraries commonly contain an
+	// ideographic/full-width space (U+3000), so include Unicode separator spaces
+	// explicitly wherever whitespace separates a title from volume/variant data.
+	existingVolumeVol  = regexp.MustCompile(`(?i)(?:^|[\s\p{Zs}_\-])(?:vol(?:ume)?\.?|v)[\s\p{Zs}]*([0-9０-９]{1,4})(?:\b|$)`)
+	existingVolumeTail = regexp.MustCompile(`(?:^|[\s\p{Zs}_\-])([0-9０-９]{1,3})(?:[\s\p{Zs}]*(?:巻|卷))?(?:[\s\p{Zs}]*(?:特装版|通常版|限定版|完))?[\s\p{Zs}]*$`)
+	existingVariantBracket = regexp.MustCompile(`(?i)[\s\p{Zs}]*[\[【（(][\s\p{Zs}]*(?:フルカラー|カラー|セミカラー|モノクロ|白黒|別スキャン|別scan|別炊|再スキャン|再scan|修正版?|fix(?:ed)?|番外編?|外伝|特典|おまけ|bonus|extra|単ページ|見開き(?:結合)?)(?:版)?[\s\p{Zs}]*[\]】）)][\s\p{Zs}]*$`)
+	existingVariantPlain = regexp.MustCompile(`(?i)(?:[\s\p{Zs}]|[_\-])+[\s\p{Zs}]*(?:フルカラー版?|カラー版?|セミカラー版?|モノクロ版?|白黒版?|別スキャン|別scan|別炊|再スキャン|再scan|修正版?|fix(?:ed)?|番外編?|外伝|特典|おまけ|bonus|extra|単ページ|見開き(?:結合)?)(?:[\s\p{Zs}]*版)?[\s\p{Zs}]*$`)
 )
 
 func ParseExistingFilename(filename string) Result {
