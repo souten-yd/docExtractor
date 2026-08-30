@@ -68,3 +68,39 @@ func TestReconcileLowConfidenceFilenameStillBeatsUnrelatedLegacyBucket(t *testin
 		t.Fatalf("unexpected report: %+v", report.Items)
 	}
 }
+
+func TestReconcileSimpleVariantsUseMainSeriesFolder(t *testing.T) {
+	root := t.TempDir()
+	legacy := filepath.Join(root, "旧フォルダ")
+	if err := os.MkdirAll(legacy, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"作品名 カラー版 第01巻.zip",
+		"作品名 第02巻 別スキャン.zip",
+		"作品名 番外編.zip",
+	} {
+		if err := os.WriteFile(filepath.Join(legacy, name), []byte(name), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	org, err := New(Config{Root: root, ConfidenceThreshold: 0.72})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := org.ReconcileScan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Items) != 3 {
+		t.Fatalf("items=%d", len(report.Items))
+	}
+	for _, it := range report.Items {
+		if it.Series != "作品名" {
+			t.Fatalf("%s series=%q", it.Relative, it.Series)
+		}
+		if filepath.Base(filepath.Dir(it.Destination)) != "作品名" {
+			t.Fatalf("%s destination=%q", it.Relative, it.Destination)
+		}
+	}
+}
