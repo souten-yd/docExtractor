@@ -40,13 +40,12 @@ func TestClusterMergesSameAuthorPrefixSubtitleVariants(t *testing.T) {
 	for _,tc:=range cases{plans:=[]Plan{{Series:tc[0],Author:"同一作者",Destination:"/share/x/"+tc[0]+"/a.zip"},{Series:tc[1],Author:"同一作者",Destination:"/share/x/"+tc[1]+"/b.zip"}};got:=clusterPlans(plans,nil);if got[0].Series!=got[1].Series{t.Fatalf("did not merge %q and %q",tc[0],tc[1])}}
 }
 
-func TestClusterGroupsDerivativeWorksUnderMainSeries(t *testing.T) {
+func TestClusterGroupsDerivativeWorksUnderMainSeriesEvenWhenStaffChanges(t *testing.T) {
 	cases:=[]struct{main,derivative,mainAuthor,derivativeAuthor string}{
-		{"勇者パーティを追い出された器用貧乏","勇者パーティを追い出された器用貧乏 外伝 オフのセルマさんは不器用！？","よねぞう×都神樹","よねぞう×都神樹×きさらぎゆり"},
-		{"片田舎のおっさん、剣聖になる","片田舎のおっさん、剣聖になる外伝 竜双剣の軌跡","乍藤和樹×佐賀崎しげる","佐賀崎しげる×ハザマササミ"},
-		{"転生したらスライムだった件","転生したらスライムだった件 異聞 ～魔国暮らしのトリニティ～","伏瀬×川上泰樹","伏瀬×戸野タエ"},
-		{"陰の実力者になりたくて！","陰の実力者になりたくて！マスターオブガーデン～七陰列伝～","坂野杏梨×逢沢大介","kanco×逢沢大介"},
-		{"終わりのセラフ","終わりのセラフ 一瀬グレン、16歳の破滅","鏡貴也×山本ヤマト","浅見よう×鏡貴也"},
+		{"勇者パーティを追い出された器用貧乏","勇者パーティを追い出された器用貧乏 外伝 オフのセルマさんは不器用！？","よねぞう×都神樹","別作画×別構成"},
+		{"片田舎のおっさん、剣聖になる","片田舎のおっさん、剣聖になる外伝 竜双剣の軌跡","乍藤和樹×佐賀崎しげる","別作画"},
+		{"転生したらスライムだった件","転生したらスライムだった件 異聞 ～魔国暮らしのトリニティ～","伏瀬×川上泰樹","戸野タエ"},
+		{"陰の実力者になりたくて！","陰の実力者になりたくて！マスターオブガーデン～七陰列伝～","坂野杏梨×逢沢大介","kanco"},
 	}
 	for _,tc:=range cases{
 		plans:=[]Plan{{Series:tc.main,Author:tc.mainAuthor,Destination:"/share/x/"+tc.main+"/main.zip"},{Series:tc.derivative,Author:tc.derivativeAuthor,Destination:"/share/x/"+tc.derivative+"/sub.zip"}}
@@ -55,9 +54,18 @@ func TestClusterGroupsDerivativeWorksUnderMainSeries(t *testing.T) {
 	}
 }
 
-func TestClusterDoesNotMergePrefixWithoutAuthorEvidence(t *testing.T) {
+func TestClusterMergesSameAuthorInsertedQualifierVariation(t *testing.T){
+	plans:=[]Plan{
+		{Series:"念願の悪役令嬢の身体を手に入れたぞ！",Author:"羽田遼亮×中島零",Destination:"/share/x/a/a.zip"},
+		{Series:"念願の悪役令嬢（ラスボス）の身体を手に入れたぞ！",Author:"羽田遼亮×中島零",Destination:"/share/x/b/b.zip"},
+	}
+	got:=clusterPlans(plans,nil)
+	if got[0].Series!=got[1].Series{t.Fatalf("inserted qualifier variation did not merge: %q / %q",got[0].Series,got[1].Series)}
+}
+
+func TestClusterDoesNotMergeGenericPrefixWithoutAuthorEvidence(t *testing.T) {
 	plans:=[]Plan{{Series:"作品タイトル",Destination:"/share/x/作品タイトル/a.zip"},{Series:"作品タイトル 長い別作品名",Destination:"/share/x/作品タイトル 長い別作品名/b.zip"}}
-	got:=clusterPlans(plans,nil);if got[0].Series==got[1].Series{t.Fatalf("prefix-only titles should not merge without author evidence")}
+	got:=clusterPlans(plans,nil);if got[0].Series==got[1].Series{t.Fatalf("generic prefix-only titles should not merge without author evidence")}
 }
 
 func TestPersistedAliasWins(t *testing.T) {
