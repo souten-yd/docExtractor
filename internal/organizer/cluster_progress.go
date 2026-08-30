@@ -38,7 +38,6 @@ func bilingualEquivalentPrepared(a, b preparedSeries) bool {
 }
 
 func prefixSubtitleEquivalentPrepared(a, b preparedSeries) bool {
-	if a.spinOff || b.spinOff { return false }
 	short, long := a, b
 	if len(short.runes) > len(long.runes) { short, long = long, short }
 	if len(short.runes) < 8 || short.key == long.key { return false }
@@ -103,7 +102,7 @@ func clusterPlansProgress(plans []Plan,persisted map[string]string,cb ReconcileP
 	total:=len(unique)*(len(unique)-1)/2;if total==0{total=1};done:=0;step:=total/500;if step<100{step=100};reasons:=make([]string,len(unique));scores:=make([]float64,len(unique))
 	for i:=0;i<len(unique);i++{for j:=i+1;j<len(unique);j++{
 		score,reason:=sameSeriesPrepared(unique[i],unique[j])
-		if score<0.90&&prefixSubtitleEquivalentPrepared(unique[i],unique[j])&&authorsOverlap(authors[i],authors[j]){score,reason=0.96,"same-author title prefix/subtitle"}
+		if score<0.90&&prefixSubtitleEquivalentPrepared(unique[i],unique[j])&&authorsOverlap(authors[i],authors[j]){score,reason=0.96,"same-author title prefix/subtitle or derivative"}
 		if score>=0.90{union(i,j);if reasons[i]==""{reasons[i],scores[i]=reason,score};if reasons[j]==""{reasons[j],scores[j]=reason,score}}
 		done++;if done==total||done%step==0{emitReconcileProgress(cb,"clustering",done,total,"シリーズ名比較中")}
 	}}
