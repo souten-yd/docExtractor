@@ -44,9 +44,30 @@ func prefixSubtitleEquivalentPrepared(a, b preparedSeries) bool {
 	return strings.HasPrefix(long.key, short.key) && len(long.runes)-len(short.runes) >= 2
 }
 
+func derivativeFamilyPrefixPrepared(a,b preparedSeries) bool {
+	short,long:=a,b
+	if len(short.runes)>len(long.runes){short,long=long,short}
+	if len(short.runes)<6||short.key==long.key||!strings.HasPrefix(long.key,short.key){return false}
+	return long.spinOff
+}
+
+func singleInsertedQualifierPrepared(a,b preparedSeries) bool {
+	short,long:=a,b
+	if len(short.runes)>len(long.runes){short,long=long,short}
+	if len(short.runes)<10||len(long.runes)<=len(short.runes){return false}
+	prefix:=0
+	for prefix<len(short.runes)&&short.runes[prefix]==long.runes[prefix]{prefix++}
+	suffix:=0
+	for suffix<len(short.runes)-prefix&&short.runes[len(short.runes)-1-suffix]==long.runes[len(long.runes)-1-suffix]{suffix++}
+	if prefix+suffix!=len(short.runes){return false}
+	inserted:=len(long.runes)-len(short.runes)
+	return inserted>=1&&inserted<=8
+}
+
 func sameSeriesPrepared(a, b preparedSeries) (float64, string) {
 	if a.key == "" || b.key == "" { return 0, "" }
 	if a.key == b.key { return 1, "normalized exact match" }
+	if derivativeFamilyPrefixPrepared(a,b) { return .97, "explicit derivative in same series family" }
 	if bilingualEquivalentPrepared(a, b) { return 0.98, "bilingual title alias" }
 	if a.spinOff || b.spinOff { return 0, "" }
 	la, lb := len(a.runes), len(b.runes)
@@ -60,6 +81,16 @@ func sameSeriesPrepared(a, b preparedSeries) (float64, string) {
 	if la>=10&&lb>=10&&s>=0.90{return s,"minor filename variation"}
 	if la>=8&&lb>=8&&s>=0.94{return s,"minor filename variation"}
 	return 0,""
+}
+
+func sameAuthorNearEquivalentPrepared(a,b preparedSeries)(float64,bool){
+	if a.spinOff||b.spinOff{return 0,false}
+	if singleInsertedQualifierPrepared(a,b){return .95,true}
+	la,lb:=len(a.runes),len(b.runes);if la<10||lb<10{return 0,false}
+	maxLen:=la;if lb>maxLen{maxLen=lb};diff:=la-lb;if diff<0{diff=-diff}
+	if maxLen==0||1-float64(diff)/float64(maxLen)<.86{return 0,false}
+	s:=levenshteinSimilarity(a.runes,b.runes)
+	return s,s>=.86
 }
 
 func buildAliasIndex(persisted map[string]string) map[string]string {
@@ -102,8 +133,10 @@ func clusterPlansProgress(plans []Plan,persisted map[string]string,cb ReconcileP
 	total:=len(unique)*(len(unique)-1)/2;if total==0{total=1};done:=0;step:=total/500;if step<100{step=100};reasons:=make([]string,len(unique));scores:=make([]float64,len(unique))
 	for i:=0;i<len(unique);i++{for j:=i+1;j<len(unique);j++{
 		score,reason:=sameSeriesPrepared(unique[i],unique[j])
-		if score<0.90&&prefixSubtitleEquivalentPrepared(unique[i],unique[j])&&authorsOverlap(authors[i],authors[j]){score,reason=0.96,"same-author title prefix/subtitle or derivative"}
-		if score>=0.90{union(i,j);if reasons[i]==""{reasons[i],scores[i]=reason,score};if reasons[j]==""{reasons[j],scores[j]=reason,score}}
+		sharedAuthor:=authorsOverlap(authors[i],authors[j])
+		if score<0.90&&prefixSubtitleEquivalentPrepared(unique[i],unique[j])&&sharedAuthor{score,reason=0.96,"same-author title prefix/subtitle"}
+		if score<0.90&&sharedAuthor{if s,ok:=sameAuthorNearEquivalentPrepared(unique[i],unique[j]);ok{score,reason=s,"same-author title variation"}}
+		if score>=0.86{union(i,j);if reasons[i]==""{reasons[i],scores[i]=reason,score};if reasons[j]==""{reasons[j],scores[j]=reason,score}}
 		done++;if done==total||done%step==0{emitReconcileProgress(cb,"clustering",done,total,"シリーズ名比較中")}
 	}}
 	if len(unique)==1{emitReconcileProgress(cb,"clustering",1,1,"シリーズ名比較完了")}
