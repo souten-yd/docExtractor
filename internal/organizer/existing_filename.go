@@ -10,14 +10,17 @@ import "github.com/souten-yd/docExtractor/internal/classifier"
 // "Screenshot", or source bucket names) and must not override the archive
 // filename. Archive member inspection is reserved for the archive-processing
 // workflow.
+//
+// Keep the parser independent from raw-archive classification so future
+// archive-processing changes cannot alter an already-organized library.
 func inferExistingArchiveName(filename string) nameEvidence {
-	parsed := classifier.Parse(filename)
+	parsed := classifier.ParseExistingFilename(filename)
 	return nameEvidence{
-		Parsed:     parsed,
-		Coverage:   classifier.ParseCoverage(filename),
-		Source:     "filesystem-filename",
-		Evidence:   []string{"filesystem archive filename only"},
-		Candidates: []string{filename},
+		Parsed:         parsed,
+		Coverage:       classifier.ParseCoverage(filename),
+		Source:         "filesystem-filename",
+		Evidence:       []string{"filesystem archive filename only", "legacy processed-library parser"},
+		Candidates:     []string{filename},
 		CandidateCount: 1,
 	}
 }
