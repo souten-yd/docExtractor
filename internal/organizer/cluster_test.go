@@ -22,23 +22,9 @@ func TestSameSeriesMinorVariation(t *testing.T) {
 	if score < 0.90 { t.Fatalf("score=%v", score) }
 }
 
-func TestSpinOffDoesNotAutoMerge(t *testing.T) {
-	for _, b := range []string{"BLACK LAGOON 外伝", "BLACK LAGOON 異聞", "BLACK LAGOON 前日譚"} {
-		score, _ := sameSeries("BLACK LAGOON", b)
-		if score != 0 { t.Fatalf("spin-off should not merge: %q score=%v", b, score) }
-	}
-}
-
 func TestClusterChoosesConciseJapaneseCanonical(t *testing.T) {
-	plans := []Plan{
-		{Series: "BLACK LAGOON", Destination: "/share/x/BLACK LAGOON/a.zip"},
-		{Series: "BLACK LAGOON ブラック・ラグーン", Destination: "/share/x/BLACK LAGOON ブラック・ラグーン/b.zip"},
-		{Series: "ブラック・ラグーン", Destination: "/share/x/ブラック・ラグーン/c.zip"},
-	}
-	got := clusterPlans(plans, nil)
-	for _, p := range got {
-		if p.Series != "ブラック・ラグーン" { t.Fatalf("unexpected canonical: %q", p.Series) }
-	}
+	plans := []Plan{{Series:"BLACK LAGOON",Destination:"/share/x/BLACK LAGOON/a.zip"},{Series:"BLACK LAGOON ブラック・ラグーン",Destination:"/share/x/BLACK LAGOON ブラック・ラグーン/b.zip"},{Series:"ブラック・ラグーン",Destination:"/share/x/ブラック・ラグーン/c.zip"}}
+	got:=clusterPlans(plans,nil);for _,p:=range got{if p.Series!="ブラック・ラグーン"{t.Fatalf("unexpected canonical: %q",p.Series)}}
 }
 
 func TestClusterMergesSameAuthorPrefixSubtitleVariants(t *testing.T) {
@@ -51,36 +37,33 @@ func TestClusterMergesSameAuthorPrefixSubtitleVariants(t *testing.T) {
 		{"追放最凶クズ（？）賢者の辺境子育てスローライフ", "追放最凶クズ（？）賢者の辺境子育てスローライフ クズだと勘違いされがちな最強の善人は魔王の娘を超絶いい子に育て上げる"},
 		{"乙女ゲームの破滅フラグしかない悪役令嬢に転生してしまった…", "乙女ゲームの破滅フラグしかない悪役令嬢に転生してしまった…カタリナからの手紙"},
 	}
-	for _, tc := range cases {
-		plans := []Plan{
-			{Series:tc[0],Author:"同一作者",Destination:"/share/x/"+tc[0]+"/a.zip"},
-			{Series:tc[1],Author:"同一作者",Destination:"/share/x/"+tc[1]+"/b.zip"},
-		}
+	for _,tc:=range cases{plans:=[]Plan{{Series:tc[0],Author:"同一作者",Destination:"/share/x/"+tc[0]+"/a.zip"},{Series:tc[1],Author:"同一作者",Destination:"/share/x/"+tc[1]+"/b.zip"}};got:=clusterPlans(plans,nil);if got[0].Series!=got[1].Series{t.Fatalf("did not merge %q and %q",tc[0],tc[1])}}
+}
+
+func TestClusterGroupsDerivativeWorksUnderMainSeries(t *testing.T) {
+	cases:=[]struct{main,derivative,mainAuthor,derivativeAuthor string}{
+		{"勇者パーティを追い出された器用貧乏","勇者パーティを追い出された器用貧乏 外伝 オフのセルマさんは不器用！？","よねぞう×都神樹","よねぞう×都神樹×きさらぎゆり"},
+		{"片田舎のおっさん、剣聖になる","片田舎のおっさん、剣聖になる外伝 竜双剣の軌跡","乍藤和樹×佐賀崎しげる","佐賀崎しげる×ハザマササミ"},
+		{"転生したらスライムだった件","転生したらスライムだった件 異聞 ～魔国暮らしのトリニティ～","伏瀬×川上泰樹","伏瀬×戸野タエ"},
+		{"陰の実力者になりたくて！","陰の実力者になりたくて！マスターオブガーデン～七陰列伝～","坂野杏梨×逢沢大介","kanco×逢沢大介"},
+		{"終わりのセラフ","終わりのセラフ 一瀬グレン、16歳の破滅","鏡貴也×山本ヤマト","浅見よう×鏡貴也"},
+	}
+	for _,tc:=range cases{
+		plans:=[]Plan{{Series:tc.main,Author:tc.mainAuthor,Destination:"/share/x/"+tc.main+"/main.zip"},{Series:tc.derivative,Author:tc.derivativeAuthor,Destination:"/share/x/"+tc.derivative+"/sub.zip"}}
 		got:=clusterPlans(plans,nil)
-		if got[0].Series!=got[1].Series { t.Fatalf("did not merge %q and %q: %q / %q",tc[0],tc[1],got[0].Series,got[1].Series) }
+		if got[0].Series!=tc.main||got[1].Series!=tc.main{t.Fatalf("derivative not grouped under main %q: %q / %q",tc.main,got[0].Series,got[1].Series)}
 	}
 }
 
 func TestClusterDoesNotMergePrefixWithoutAuthorEvidence(t *testing.T) {
 	plans:=[]Plan{{Series:"作品タイトル",Destination:"/share/x/作品タイトル/a.zip"},{Series:"作品タイトル 長い別作品名",Destination:"/share/x/作品タイトル 長い別作品名/b.zip"}}
-	got:=clusterPlans(plans,nil)
-	if got[0].Series==got[1].Series { t.Fatalf("prefix-only titles should not merge without author evidence") }
-}
-
-func TestClusterDoesNotMergeNamedSpinOffEvenWithSameAuthor(t *testing.T) {
-	plans:=[]Plan{{Series:"転生したらスライムだった件",Author:"作者",Destination:"/share/x/a/a.zip"},{Series:"転生したらスライムだった件 異聞 ～魔国暮らしのトリニティ～",Author:"作者",Destination:"/share/x/b/b.zip"}}
-	got:=clusterPlans(plans,nil)
-	if got[0].Series==got[1].Series { t.Fatalf("named spin-off should remain separate") }
+	got:=clusterPlans(plans,nil);if got[0].Series==got[1].Series{t.Fatalf("prefix-only titles should not merge without author evidence")}
 }
 
 func TestPersistedAliasWins(t *testing.T) {
-	plans := []Plan{{Series: "Black_Lagoon", Destination: "/share/x/Black_Lagoon/a.zip"}}
-	got := clusterPlans(plans, map[string]string{"Black Lagoon": "ブラック・ラグーン"})
-	if got[0].Series != "ブラック・ラグーン" { t.Fatalf("got %q", got[0].Series) }
+	plans:=[]Plan{{Series:"Black_Lagoon",Destination:"/share/x/Black_Lagoon/a.zip"}};got:=clusterPlans(plans,map[string]string{"Black Lagoon":"ブラック・ラグーン"});if got[0].Series!="ブラック・ラグーン"{t.Fatalf("got %q",got[0].Series)}
 }
 
 func TestBrokenAndVolumeOnlySeriesAreRejected(t *testing.T) {
-	for _, s := range []string{"第13巻", "Vol. 8", "ch06", "���作品名", "A"} {
-		if seriesNameUsable(s) { t.Fatalf("should reject %q", s) }
-	}
+	for _,s:=range []string{"第13巻","Vol. 8","ch06","���作品名","A"}{if seriesNameUsable(s){t.Fatalf("should reject %q",s)}}
 }
