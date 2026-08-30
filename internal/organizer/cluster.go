@@ -20,7 +20,23 @@ func chooseCanonical(plans []Plan,idxs []int,persisted map[string]string)string{
 
 func richerSeries(a,b string)bool{return betterSeriesDisplay(a,b)}
 
-func sameSeries(a,b string)(float64,string){if !seriesNameUsable(a)||!seriesNameUsable(b){return 0,""};ka,kb:=canonicalKey(a),canonicalKey(b);if ka==""||kb==""{return 0,""};if ka==kb{return 1,"normalized exact match"};if bilingualEquivalent(a,b){return .98,"bilingual title alias"};if hasSpinOffMarker(a)||hasSpinOffMarker(b){return 0,""};la,lb:=len([]rune(ka)),len([]rune(kb));s:=levenshteinSimilarity([]rune(ka),[]rune(kb));if la>=10&&lb>=10&&s>=.90{return s,"minor filename variation"};if la>=8&&lb>=8&&s>=.94{return s,"minor filename variation"};return 0,""}
+func derivativeFamilyPrefix(a,b string)bool{
+	short,long:=a,b
+	sk,lk:=canonicalKey(short),canonicalKey(long)
+	if len([]rune(sk))>len([]rune(lk)){short,long=long,short;sk,lk=lk,sk}
+	if len([]rune(sk))<6||sk==lk||!strings.HasPrefix(lk,sk){return false}
+	return hasSpinOffMarker(long)
+}
+
+func sameSeries(a,b string)(float64,string){
+	if !seriesNameUsable(a)||!seriesNameUsable(b){return 0,""}
+	ka,kb:=canonicalKey(a),canonicalKey(b);if ka==""||kb==""{return 0,""}
+	if ka==kb{return 1,"normalized exact match"}
+	if derivativeFamilyPrefix(a,b){return .97,"explicit derivative in same series family"}
+	if bilingualEquivalent(a,b){return .98,"bilingual title alias"}
+	if hasSpinOffMarker(a)||hasSpinOffMarker(b){return 0,""}
+	la,lb:=len([]rune(ka)),len([]rune(kb));s:=levenshteinSimilarity([]rune(ka),[]rune(kb));if la>=10&&lb>=10&&s>=.90{return s,"minor filename variation"};if la>=8&&lb>=8&&s>=.94{return s,"minor filename variation"};return 0,""
+}
 
 func bilingualEquivalent(a,b string)bool{if hasSpinOffMarker(a)||hasSpinOffMarker(b){return false};short,long:=a,b;if len([]rune(canonicalKey(short)))>len([]rune(canonicalKey(long))){short,long=long,short};sk,lk:=canonicalKey(short),canonicalKey(long);if len([]rune(sk))<4||sk==lk{return false};var rest string;switch{case strings.HasPrefix(lk,sk):rest=strings.TrimPrefix(lk,sk);case strings.HasSuffix(lk,sk):rest=strings.TrimSuffix(lk,sk);default:return false};if rest==""{return false};if containsJapaneseText(short)&&!containsLatin(short){return containsLatin(rest)};if containsLatin(short)&&!containsJapaneseText(short){return containsJapaneseText(rest)};return false}
 
