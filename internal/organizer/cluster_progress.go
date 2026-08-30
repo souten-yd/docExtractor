@@ -40,7 +40,7 @@ func bilingualEquivalentPrepared(a, b preparedSeries) bool {
 func prefixSubtitleEquivalentPrepared(a, b preparedSeries) bool {
 	short, long := a, b
 	if len(short.runes) > len(long.runes) { short, long = long, short }
-	if len(short.runes) < 8 || short.key == long.key { return false }
+	if len(short.runes) < 6 || short.key == long.key { return false }
 	return strings.HasPrefix(long.key, short.key) && len(long.runes)-len(short.runes) >= 2
 }
 
