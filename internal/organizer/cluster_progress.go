@@ -51,6 +51,19 @@ func derivativeFamilyPrefixPrepared(a,b preparedSeries) bool {
 	return long.spinOff
 }
 
+func singleInsertedQualifierPrepared(a,b preparedSeries) bool {
+	short,long:=a,b
+	if len(short.runes)>len(long.runes){short,long=long,short}
+	if len(short.runes)<10||len(long.runes)<=len(short.runes){return false}
+	prefix:=0
+	for prefix<len(short.runes)&&short.runes[prefix]==long.runes[prefix]{prefix++}
+	suffix:=0
+	for suffix<len(short.runes)-prefix&&short.runes[len(short.runes)-1-suffix]==long.runes[len(long.runes)-1-suffix]{suffix++}
+	if prefix+suffix!=len(short.runes){return false}
+	inserted:=len(long.runes)-len(short.runes)
+	return inserted>=1&&inserted<=8
+}
+
 func sameSeriesPrepared(a, b preparedSeries) (float64, string) {
 	if a.key == "" || b.key == "" { return 0, "" }
 	if a.key == b.key { return 1, "normalized exact match" }
@@ -72,6 +85,7 @@ func sameSeriesPrepared(a, b preparedSeries) (float64, string) {
 
 func sameAuthorNearEquivalentPrepared(a,b preparedSeries)(float64,bool){
 	if a.spinOff||b.spinOff{return 0,false}
+	if singleInsertedQualifierPrepared(a,b){return .95,true}
 	la,lb:=len(a.runes),len(b.runes);if la<10||lb<10{return 0,false}
 	maxLen:=la;if lb>maxLen{maxLen=lb};diff:=la-lb;if diff<0{diff=-diff}
 	if maxLen==0||1-float64(diff)/float64(maxLen)<.86{return 0,false}
