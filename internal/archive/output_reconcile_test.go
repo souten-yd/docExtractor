@@ -115,3 +115,37 @@ func TestReconcileExactDuplicateKeepsActiveAndQuarantinesCandidate(t *testing.T)
 		t.Fatal(err)
 	}
 }
+
+func TestReconcileGroupsFromOneArchiveAtSameTarget(t *testing.T) {
+	dir := t.TempDir()
+	outRoot := filepath.Join(dir, "out")
+	series := "正規作品名"
+	target := filepath.Join(outRoot, series, "Romanized_Work_23.zip")
+	source := filepath.Join(dir, "mixed-layout.zip")
+	makeTestZIP(t, source, map[string]string{
+		"001.jpg":                   "root copy",
+		"Romanized_Work_23/001.jpg": "folder copy",
+	})
+	sourceTime := time.Unix(1700000000, 0)
+	if err := os.Chtimes(source, sourceTime, sourceTime); err != nil {
+		t.Fatal(err)
+	}
+	p := New(Config{})
+	_, err := p.Process(context.Background(), Task{
+		Source:           source,
+		Destination:      target,
+		DeleteSource:     true,
+		OutputTargets:    map[string]string{"": target, "Romanized_Work_23": target},
+		ReconcileOutputs: true,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readZIPEntry(t, target, "001.jpg"); got != "root copy" {
+		t.Fatalf("active copy=%q", got)
+	}
+	quarantine := filepath.Join(outRoot, ".docExtractor-duplicates", series, filepath.Base(target))
+	if got := readZIPEntry(t, quarantine, "001.jpg"); got != "folder copy" {
+		t.Fatalf("quarantined copy=%q", got)
+	}
+}

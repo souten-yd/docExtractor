@@ -38,23 +38,26 @@ func archiveGroupsDescribeOneWork(groups []string) bool {
 	if len(groups) == 0 {
 		return false
 	}
-	if len(groups) == 1 {
-		return true
-	}
-	first := archiveGroupSeries(groups[0])
-	if !seriesNameUsable(first) {
-		return false
-	}
-	for _, group := range groups[1:] {
+	first := ""
+	for _, group := range groups {
+		// Root-level files use an empty group. They inherit the high-confidence
+		// outer plan and therefore provide no contrary series evidence.
+		if strings.TrimSpace(group) == "" {
+			continue
+		}
 		series := archiveGroupSeries(group)
 		if !seriesNameUsable(series) {
 			return false
+		}
+		if first == "" {
+			first = series
+			continue
 		}
 		if score, _ := sameSeries(first, series); score < .86 {
 			return false
 		}
 	}
-	return true
+	return first != ""
 }
 
 func archiveGroupSeries(group string) string {
@@ -80,7 +83,12 @@ func markArchiveOutputConflicts(plans []Plan) {
 		if len(idxs) < 2 {
 			continue
 		}
+		annotated := map[int]struct{}{}
 		for _, idx := range idxs {
+			if _, ok := annotated[idx]; ok {
+				continue
+			}
+			annotated[idx] = struct{}{}
 			plans[idx].Evidence = appendUnique(plans[idx].Evidence, "overlapping volume output", 20)
 			msg := "same-volume overlap detected; exact duplicates and older variants will be quarantined: " + filepath.Base(target)
 			if plans[idx].PreviewWarning == "" {

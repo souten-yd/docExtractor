@@ -2,6 +2,7 @@ package organizer
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -103,6 +104,24 @@ func TestArchiveGroupsDescribeOneWorkAcceptsChapterRangesButRejectsMixedTitles(t
 	}
 }
 
+func TestApplyDestinationKeepsRootAndNamedSameWorkTogether(t *testing.T) {
+	root := t.TempDir()
+	o, err := New(Config{Root: root, OutputRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := Plan{Name: "Romanized_Work_23.rar", Series: "日本語の正規作品名", Confidence: .99, PreviewGroups: []string{"", "Romanized_Work_23"}, PreviewNested: true}
+	if err := o.applyDestination(&plan); err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.PredictedOutputs) != 2 || plan.PredictedOutputs[0] != plan.PredictedOutputs[1] {
+		t.Fatalf("root and named groups were not reconciled at one target: %#v", plan.PredictedOutputs)
+	}
+	if got := filepath.Base(filepath.Dir(plan.PredictedOutputs[0])); got != plan.Series {
+		t.Fatalf("target folder=%q want=%q", got, plan.Series)
+	}
+}
+
 func TestMarkArchiveOutputConflictsAnnotatesBothPlans(t *testing.T) {
 	target := "/share/Download/Temp/作品名/作品名 第01巻.zip"
 	plans := []Plan{{Name: "all.rar", PredictedOutputs: []string{target}}, {Name: "patch.rar", PredictedOutputs: []string{target}}}
@@ -111,5 +130,14 @@ func TestMarkArchiveOutputConflictsAnnotatesBothPlans(t *testing.T) {
 		if plan.PreviewWarning == "" {
 			t.Fatalf("missing warning: %#v", plan)
 		}
+	}
+}
+
+func TestMarkArchiveOutputConflictsAnnotatesSamePlanOnce(t *testing.T) {
+	target := "/share/Download/Temp/作品名/作品名 第01巻.zip"
+	plans := []Plan{{Name: "mixed-layout.rar", PredictedOutputs: []string{target, target}}}
+	markArchiveOutputConflicts(plans)
+	if got := strings.Count(plans[0].PreviewWarning, "same-volume overlap detected"); got != 1 {
+		t.Fatalf("warning count=%d: %q", got, plans[0].PreviewWarning)
 	}
 }
