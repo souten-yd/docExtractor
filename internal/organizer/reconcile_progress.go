@@ -113,6 +113,8 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 			}
 
 			n := inferExistingArchiveName(d.Name())
+			workSeries := n.Parsed.Series
+			edition := reconcileEdition(d.Name())
 			series, confidence := parentSeriesEvidence(root, path, n.Parsed.Series, n.Parsed.Confidence, o.confidenceThreshold)
 			if canonical, ok := aliasLookup(o.Aliases(), series); ok && seriesNameUsable(canonical) {
 				series, confidence = canonical, 1
@@ -120,8 +122,11 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 			if !seriesNameUsable(series) {
 				series, confidence = "", 0
 			}
+			if !seriesNameUsable(workSeries) {
+				workSeries = series
+			}
 			raws = append(raws, reconcileRaw{
-				path: path, root: root, rel: rel, name: d.Name(), series: series,
+				path: path, root: root, rel: rel, name: d.Name(), series: series, workSeries: workSeries, edition: edition,
 				confidence: confidence, size: st.Size(), modified: st.ModTime(),
 				volume: n.Parsed.Volume, hasVolume: n.Parsed.HasVolume,
 			})
@@ -148,7 +153,7 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 	items := make([]ReconcileItem, len(raws))
 	for i, r := range raws {
 		it := ReconcileItem{
-			Source: r.path, LibraryRoot: r.root, Relative: r.rel, Series: plans[i].Series,
+			Source: r.path, LibraryRoot: r.root, Relative: r.rel, Series: plans[i].Series, WorkSeries: r.workSeries, Edition: r.edition,
 			Confidence: r.confidence, Size: r.size, ModifiedAt: r.modified,
 			Volume: r.volume, HasVolume: r.hasVolume,
 		}
@@ -238,10 +243,15 @@ func archiveSecondaryRAR(name string) bool {
 }
 
 func markExactDuplicatesProgress(root string, items []ReconcileItem, cb ReconcileProgressFunc, total int) {
-	groups := map[int64][]int{}
+	type candidateKey struct {
+		size int64
+		work string
+	}
+	groups := map[candidateKey][]int{}
 	for i, it := range items {
 		if it.Action != "error" && it.Size >= 0 {
-			groups[it.Size] = append(groups[it.Size], i)
+			key := candidateKey{size: it.Size, work: reconcileWorkKey(it)}
+			groups[key] = append(groups[key], i)
 		}
 	}
 	hashTotal := 0
@@ -307,7 +317,7 @@ func resolveSameVolumeVariantsProgress(root string, items []ReconcileItem) []Rec
 		if it.Action == "error" || it.Action == "duplicate" || !it.HasVolume || it.Series == "" {
 			continue
 		}
-		key := canonicalKey(it.Series) + "#" + strconv.Itoa(it.Volume)
+		key := reconcileWorkKey(it) + "#" + strconv.Itoa(it.Volume)
 		groups[key] = append(groups[key], i)
 	}
 	choices := make([]ReconcileChoice, 0)
@@ -338,7 +348,7 @@ func resolveSameVolumeVariantsProgress(root string, items []ReconcileItem) []Rec
 
 		seq++
 		id := fmt.Sprintf("volume-choice-%d", seq)
-		choice := ReconcileChoice{ID: id, Series: items[winner].Series, Volume: items[winner].Volume, HasVolume: true, Reason: "same series/volume has no unique newest file"}
+		choice := ReconcileChoice{ID: id, Series: reconcileWorkSeries(items[winner]), Volume: items[winner].Volume, HasVolume: true, Reason: "same series/volume has no unique newest file"}
 		for _, idx := range idxs {
 			items[idx].Action = "review"
 			items[idx].ReviewGroup = id
@@ -348,6 +358,38 @@ func resolveSameVolumeVariantsProgress(root string, items []ReconcileItem) []Rec
 		choices = append(choices, choice)
 	}
 	return choices
+}
+
+func reconcileWorkSeries(it ReconcileItem) string {
+	if seriesNameUsable(it.WorkSeries) {
+		return it.WorkSeries
+	}
+	return it.Series
+}
+
+func reconcileWorkKey(it ReconcileItem) string {
+	edition := it.Edition
+	if edition == "" {
+		edition = "standard"
+	}
+	return canonicalKey(reconcileWorkSeries(it)) + "#edition:" + edition
+}
+
+func reconcileEdition(filename string) string {
+	name := strings.ToLower(strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename)))
+	compact := strings.NewReplacer(" ", "", "_", "", "-", "").Replace(name)
+	switch {
+	case strings.Contains(name, "セミカラー") || strings.Contains(compact, "semicolor") || strings.Contains(compact, "semicolour"):
+		return "semi-color"
+	case strings.Contains(name, "フルカラー") || strings.Contains(compact, "fullcolor") || strings.Contains(compact, "fullcolour"):
+		return "full-color"
+	case strings.Contains(name, "モノクロ") || strings.Contains(name, "白黒") || strings.Contains(compact, "monochrome") || strings.Contains(compact, "blackandwhite"):
+		return "monochrome"
+	case strings.Contains(name, "カラー") || strings.Contains(compact, "color") || strings.Contains(compact, "colour"):
+		return "color"
+	default:
+		return "standard"
+	}
 }
 
 func restoreConflictsWhoseDestinationWillBeVacated(items []ReconcileItem) {
