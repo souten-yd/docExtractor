@@ -16,7 +16,7 @@ type overwriteTxn struct {
 
 func beginOverwrite(task Task) (*overwriteTxn, error) {
 	tx:=&overwriteTxn{destination:filepath.Clean(task.Destination)}
-	if !task.Overwrite { return tx,nil }
+	if !task.Overwrite || task.ReconcileOutputs { return tx,nil }
 	st,err:=os.Lstat(tx.destination)
 	if errors.Is(err,os.ErrNotExist){return tx,nil}
 	if err!=nil{return nil,err}

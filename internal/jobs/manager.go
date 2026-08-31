@@ -25,6 +25,8 @@ type Task struct {
 	Destination  string `json:"destination"`
 	DeleteSource bool   `json:"delete_source"`
 	Overwrite    bool   `json:"overwrite,omitempty"`
+	OutputTargets map[string]string `json:"output_targets,omitempty"`
+	ReconcileOutputs bool `json:"reconcile_outputs,omitempty"`
 }
 
 type Job struct {

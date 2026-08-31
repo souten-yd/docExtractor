@@ -1,16 +1,15 @@
 package organizer
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/souten-yd/docExtractor/internal/dedupe"
 )
 
 type ReconcileItem struct {
@@ -152,32 +151,11 @@ func markDestinationConflicts(items []ReconcileItem) {
 }
 
 func hashFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.CopyBuffer(h, f, make([]byte, 4*1024*1024)); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return dedupe.HashFile(path)
 }
 
 func uniqueQuarantinePath(root, series, name string) string {
-	base := filepath.Join(root, ".docExtractor-duplicates", series, name)
-	if _, err := os.Lstat(base); errors.Is(err, os.ErrNotExist) {
-		return base
-	}
-	ext := filepath.Ext(name)
-	stem := strings.TrimSuffix(name, ext)
-	for n := 2; n < 10000; n++ {
-		p := filepath.Join(root, ".docExtractor-duplicates", series, fmt.Sprintf("%s (%d)%s", stem, n, ext))
-		if _, err := os.Lstat(p); errors.Is(err, os.ErrNotExist) {
-			return p
-		}
-	}
-	return base + ".duplicate"
+	return dedupe.UniqueQuarantinePath(root, series, name)
 }
 
 func removeEmptyLibraryDirs(root string) {

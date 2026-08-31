@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/souten-yd/docExtractor/internal/classifier"
 )
@@ -54,6 +55,21 @@ func outputForFolder(defaultDst, folder string) string {
 	// may legitimately produce archives belonging to different series.
 	outputRoot := filepath.Dir(filepath.Dir(defaultDst))
 	return filepath.Join(outputRoot, series, base+".zip")
+}
+
+// OutputForFolder exposes the execution target calculation to the organizer so
+// its cached dry-run plan and the worker use the same path rules.
+func OutputForFolder(defaultDst, folder string) string { return outputForFolder(defaultDst, folder) }
+
+func configuredOutputTarget(defaultDst, folder string, configured map[string]string) (string, error) {
+	target := configured[folder]
+	if target == "" { return outputForFolder(defaultDst, folder), nil }
+	target = filepath.Clean(target)
+	outputRoot := filepath.Dir(filepath.Dir(defaultDst))
+	rel, err := filepath.Rel(outputRoot, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) { return "", errors.New("configured output target escapes output root") }
+	if !strings.EqualFold(filepath.Ext(target), ".zip") { return "", errors.New("configured output target must be a ZIP") }
+	return target, nil
 }
 
 func checkOutputTarget(target string, overwrite bool) error {
@@ -100,19 +116,28 @@ func copyZIPRaw(ctx context.Context, src, dst string, overwrite bool) (int, int6
 	return entries, st.Size(), nil
 }
 
-func moveOrCopyVerifiedZIP(ctx context.Context, src, dst string, overwrite bool, report func(Progress)) (Result, error) {
+func moveOrCopyVerifiedZIP(ctx context.Context, src, dst string, overwrite, reconcile bool, report func(Progress)) (Result, error) {
 	if filepath.Clean(src) == filepath.Clean(dst) {
 		entries, err := VerifyZIPNoNestedArchives(ctx, src, VerifyCentral)
 		if err != nil { return Result{}, err }
 		st, _ := os.Stat(src)
 		return Result{Operation:"already-normalized", Entries:entries, BytesRead:st.Size()}, nil
 	}
-	if err := checkOutputTarget(dst, overwrite); err != nil { return Result{}, err }
 	entries, err := VerifyZIPNoNestedArchives(ctx, src, VerifyCentral)
 	if err != nil { return Result{}, err }
 	st, err := os.Stat(src); if err != nil { return Result{}, err }
 	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil { return Result{}, err }
 	report(Progress{Stage:"rename-or-copy", Progress:.94, BytesRead:st.Size()})
+	if reconcile {
+		f,err:=os.CreateTemp(filepath.Dir(dst),".docextractor-candidate-*.zip");if err!=nil{return Result{},err};candidate:=f.Name();if err:=f.Close();err!=nil{_ = os.Remove(candidate);return Result{},err};_ = os.Remove(candidate)
+		moved:=false;written:=int64(0)
+		if err:=os.Rename(src,candidate);err==nil{moved=true}else if errors.Is(err,syscall.EXDEV){copied,n,copyErr:=copyZIPRaw(ctx,src,candidate,false);if copyErr!=nil{return Result{},copyErr};if copied!=entries{return Result{},fmt.Errorf("cross-device ZIP copy changed entry count")};written=n}else{return Result{},err}
+		if err:=os.Chtimes(candidate,st.ModTime(),st.ModTime());err!=nil{if moved{_ = os.Rename(candidate,src)}else{_ = os.Remove(candidate)};return Result{},err}
+		decision,err:=publishCandidate(candidate,dst,true);if err!=nil{if moved{_ = os.Rename(candidate,src)}else{_ = os.Remove(candidate)};return Result{},err}
+		if !moved{if err:=os.Remove(src);err!=nil{return Result{Operation:"reconcile-folder-zip",Entries:entries,BytesRead:st.Size(),BytesWritten:written},fmt.Errorf("output complete but source removal failed: %w",err)}}
+		return Result{Operation:"reconcile-folder-zip("+string(decision)+")",Entries:entries,BytesRead:st.Size(),BytesWritten:written},nil
+	}
+	if err := checkOutputTarget(dst, overwrite); err != nil { return Result{}, err }
 	if overwrite { _ = os.Remove(dst) }
 	if err := os.Rename(src, dst); err == nil {
 		return Result{Operation:"rename-folder-zip", Entries:entries, BytesRead:st.Size()}, nil
@@ -126,7 +151,7 @@ func moveOrCopyVerifiedZIP(ctx context.Context, src, dst string, overwrite bool,
 	return Result{Operation:"copy-folder-zip", Entries:entries, BytesRead:st.Size(), BytesWritten:written}, nil
 }
 
-func (p *Processor) splitNormalizedZIP(ctx context.Context, normalized, defaultDst, preferredSingleName string, overwrite bool, report func(Progress)) (Result, error) {
+func (p *Processor) splitNormalizedZIP(ctx context.Context, normalized, defaultDst, preferredSingleName string, sourceTime time.Time, configured map[string]string, reconcile bool, report func(Progress)) (Result, error) {
 	zr, err := zip.OpenReader(normalized)
 	if err != nil { return Result{}, err }
 	defer zr.Close()
@@ -149,9 +174,9 @@ func (p *Processor) splitNormalizedZIP(ctx context.Context, normalized, defaultD
 	groups := make([]string,0,len(groupMap)); for g := range groupMap { groups=append(groups,g) }; sort.Strings(groups)
 	targets := make(map[string]string,len(groups)); seen := map[string]struct{}{}
 	for _, g := range groups {
-		target := outputForFolder(defaultDst,g)
+		target,err := configuredOutputTarget(defaultDst,g,configured);if err!=nil{return Result{},err}
 		key := strings.ToLower(filepath.Clean(target)); if _, ok:=seen[key];ok{return Result{},fmt.Errorf("multiple folders resolve to same output: %s",filepath.Base(target))};seen[key]=struct{}{}
-		if err:=checkOutputTarget(target,overwrite);err!=nil{return Result{},err};targets[g]=target
+		if !reconcile{if err:=checkOutputTarget(target,false);err!=nil{return Result{},err}};targets[g]=target
 	}
 	partials := map[string]string{}
 	cleanup := func(){for _,x:=range partials{_ = os.Remove(x)}}
@@ -171,8 +196,9 @@ func (p *Processor) splitNormalizedZIP(ctx context.Context, normalized, defaultD
 		}
 		if err:=zw.Close();err!=nil{_ = out.Close();cleanup();return Result{},err};if err:=out.Sync();err!=nil{_ = out.Close();cleanup();return Result{},err};if err:=out.Close();err!=nil{cleanup();return Result{},err}
 		if _,err:=VerifyZIPNoNestedArchives(ctx,partial,p.cfg.Verify);err!=nil{cleanup();return Result{},fmt.Errorf("split ZIP verification failed for %s: %w",filepath.Base(target),err)}
+		if !sourceTime.IsZero(){if err:=os.Chtimes(partial,sourceTime,sourceTime);err!=nil{cleanup();return Result{},err}}
 		st,err:=os.Stat(partial);if err!=nil{cleanup();return Result{},err};totalWritten+=st.Size();report(Progress{Stage:"split-folders",Progress:.75+.2*float64(index+1)/float64(len(groups)),BytesWritten:totalWritten})
 	}
-	for _,g:=range groups{target:=targets[g];if overwrite{_ = os.Remove(target)};if err:=os.Rename(partials[g],target);err!=nil{cleanup();return Result{},err};delete(partials,g)}
+	for _,g:=range groups{target:=targets[g];if _,err:=publishCandidate(partials[g],target,reconcile);err!=nil{cleanup();return Result{},err};delete(partials,g)}
 	return Result{Operation:fmt.Sprintf("split-folders(%d)",len(groups)),Entries:totalEntries,BytesWritten:totalWritten},nil
 }

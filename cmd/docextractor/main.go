@@ -75,7 +75,7 @@ func makeProcessor(p *archive.Processor, dm *diagnostics.Manager) jobs.Processor
 		logger, _ := dm.Job(jobID); start := time.Now()
 		if logger != nil { _ = logger.Write(diagnostics.Event{Component:"worker",Stage:"start",Message:"job started",Fields:map[string]any{"source_path":task.Source,"destination_path":task.Destination}}) }
 		var logMu sync.Mutex; lastStage:=""; stageStarted:=start; var stageRead,stageWritten,lastLoggedBytes int64
-		result,err:=p.Process(ctx,archive.Task{Source:task.Source,Destination:task.Destination,DeleteSource:task.DeleteSource},func(pg archive.Progress){
+		result,err:=p.Process(ctx,archive.Task{Source:task.Source,Destination:task.Destination,DeleteSource:task.DeleteSource,OutputTargets:task.OutputTargets,ReconcileOutputs:task.ReconcileOutputs},func(pg archive.Progress){
 			update(jobs.Update{Stage:pg.Stage,Progress:pg.Progress,BytesRead:pg.BytesRead,BytesWritten:pg.BytesWritten});if logger==nil{return};logMu.Lock();defer logMu.Unlock();now:=time.Now();stageChanged:=pg.Stage!=""&&pg.Stage!=lastStage
 			if stageChanged{if lastStage!=""&&lastStage!="done"{writeStageMetric(logger,lastStage,now.Sub(stageStarted),pg.BytesRead-stageRead,pg.BytesWritten-stageWritten)};lastStage=pg.Stage;stageStarted=now;stageRead=pg.BytesRead;stageWritten=pg.BytesWritten}
 			maxBytes:=pg.BytesRead;if pg.BytesWritten>maxBytes{maxBytes=pg.BytesWritten};if stageChanged||maxBytes-lastLoggedBytes>=256*1024*1024{lastLoggedBytes=maxBytes;elapsed:=time.Since(start);_ = logger.Write(diagnostics.Event{Component:"worker",Stage:pg.Stage,Message:"progress",BytesRead:pg.BytesRead,BytesWritten:pg.BytesWritten,Fields:map[string]any{"elapsed_ms":elapsed.Milliseconds(),"io_mib_per_sec":throughputMiB(pg.BytesRead+pg.BytesWritten,elapsed)}})}
