@@ -31,7 +31,7 @@ func InspectRAR(filename string) (RARInfo, error) {
 	return info, nil
 }
 
-func (p *Processor) processRAR(ctx context.Context, src, dst string, deleteSource bool, report func(Progress)) (Result, error) {
+func (p *Processor) processRAR(ctx context.Context, src, dst string, deleteSource bool, targets map[string]string, reconcile bool, report func(Progress)) (Result, error) {
 	report(Progress{Stage: "inspect-rar"})
 	info, err := InspectRAR(src)
 	if err != nil { return Result{}, err }
@@ -53,7 +53,7 @@ func (p *Processor) processRAR(ctx context.Context, src, dst string, deleteSourc
 	if err != nil { return Result{}, fmt.Errorf("generated ZIP verification failed: %w", err) }
 	if verifiedEntries != entries { return Result{}, fmt.Errorf("generated ZIP entry count changed during verification: wrote %d verified %d", entries, verifiedEntries) }
 
-	res, err := p.splitNormalizedZIP(ctx, normalized, dst, info.CommonRoot, false, report)
+	res, err := p.splitNormalizedZIP(ctx, normalized, dst, info.CommonRoot, st.ModTime(), targets, reconcile, report)
 	if err != nil { return Result{}, err }
 	if nested > 0 { res.Operation = fmt.Sprintf("rar-recursive-split(%d archives)", nested) } else { res.Operation = "rar-folder-split" }
 	res.BytesRead = st.Size()

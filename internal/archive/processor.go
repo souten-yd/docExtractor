@@ -47,6 +47,8 @@ type Task struct {
 	Source       string
 	Destination  string
 	DeleteSource bool
+	OutputTargets map[string]string
+	ReconcileOutputs bool
 }
 
 type Progress struct {
@@ -122,20 +124,15 @@ func (p *Processor) Process(ctx context.Context, task Task, report func(Progress
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	if _, err := os.Stat(dst); err == nil {
-		return Result{}, fmt.Errorf("destination already exists: %s", filepath.Base(dst))
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return Result{}, err
-	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 		return Result{}, err
 	}
 
 	switch strings.ToLower(filepath.Ext(src)) {
 	case ".zip", ".cbz":
-		return p.processZIP(ctx, src, dst, task.DeleteSource, report)
+		return p.processZIP(ctx, src, dst, task.DeleteSource, task.OutputTargets, task.ReconcileOutputs, report)
 	case ".rar", ".cbr":
-		return p.processRAR(ctx, src, dst, task.DeleteSource, report)
+		return p.processRAR(ctx, src, dst, task.DeleteSource, task.OutputTargets, task.ReconcileOutputs, report)
 	default:
 		return Result{}, fmt.Errorf("unsupported archive extension: %s", filepath.Ext(src))
 	}

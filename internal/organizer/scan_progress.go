@@ -49,6 +49,7 @@ func (o *Organizer) ScanWithProgress(cb func(ScanProgress)) ([]Plan, error) {
 	for _, p := range plans { if p.Error == "" && p.Series != "" { resolved[p.Name] = p.Series } }
 	o.mu.Lock(); o.resolved = resolved; o.mu.Unlock()
 	for i := range plans { if plans[i].Error == "" { if err := o.applyDestination(&plans[i]); err != nil { plans[i].Error = err.Error(); plans[i].NeedsReview = true } } }
+	markArchiveOutputConflicts(plans)
 	sort.Slice(plans, func(i,j int) bool { return plans[i].Name < plans[j].Name })
 	if cb != nil { cb(ScanProgress{Phase:"done", Completed:total, Total:total, Message:"解析完了"}) }
 	return plans, nil
