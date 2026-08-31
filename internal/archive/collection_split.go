@@ -175,7 +175,7 @@ func (p *Processor) splitNormalizedZIP(ctx context.Context, normalized, defaultD
 	targets := make(map[string]string,len(groups)); seen := map[string]struct{}{}
 	for _, g := range groups {
 		target,err := configuredOutputTarget(defaultDst,g,configured);if err!=nil{return Result{},err}
-		key := strings.ToLower(filepath.Clean(target)); if _, ok:=seen[key];ok{return Result{},fmt.Errorf("multiple folders resolve to same output: %s",filepath.Base(target))};seen[key]=struct{}{}
+		key := strings.ToLower(filepath.Clean(target)); if _, ok:=seen[key];ok&&!reconcile{return Result{},fmt.Errorf("multiple folders resolve to same output: %s",filepath.Base(target))};seen[key]=struct{}{}
 		if !reconcile{if err:=checkOutputTarget(target,false);err!=nil{return Result{},err}};targets[g]=target
 	}
 	partials := map[string]string{}
@@ -183,8 +183,9 @@ func (p *Processor) splitNormalizedZIP(ctx context.Context, normalized, defaultD
 	var totalWritten int64; totalEntries:=0
 	for index,g := range groups {
 		target:=targets[g]; if err:=os.MkdirAll(filepath.Dir(target),0o750);err!=nil{cleanup();return Result{},err}
-		partial:=target+".partial";_ = os.Remove(partial);partials[g]=partial
-		out,err:=os.OpenFile(partial,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0o640);if err!=nil{cleanup();return Result{},err}
+		out,err:=os.CreateTemp(filepath.Dir(target),".docextractor-split-*.partial");if err!=nil{cleanup();return Result{},err}
+		partial:=out.Name();partials[g]=partial
+		if err:=out.Chmod(0o640);err!=nil{_ = out.Close();cleanup();return Result{},err}
 		zw:=zip.NewWriter(out)
 		for _,f:=range groupMap[g]{
 			name,err:=safeArchiveName(f.Name,"");if err!=nil{_ = zw.Close();_ = out.Close();cleanup();return Result{},err}
