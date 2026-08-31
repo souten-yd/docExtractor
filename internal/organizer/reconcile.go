@@ -17,6 +17,8 @@ type ReconcileItem struct {
 	LibraryRoot  string    `json:"library_root"`
 	Relative     string    `json:"relative"`
 	Series       string    `json:"series"`
+	WorkSeries   string    `json:"work_series,omitempty"`
+	Edition      string    `json:"edition,omitempty"`
 	Destination  string    `json:"destination"`
 	Action       string    `json:"action"`
 	Confidence   float64   `json:"confidence"`
@@ -67,13 +69,13 @@ type ReconcileResult struct {
 }
 
 type reconcileRaw struct {
-	path, root, rel, name, series string
-	confidence                    float64
-	size                          int64
-	modified                      time.Time
-	volume                        int
-	hasVolume                     bool
-	err                           error
+	path, root, rel, name, series, workSeries, edition string
+	confidence                                         float64
+	size                                               int64
+	modified                                           time.Time
+	volume                                             int
+	hasVolume                                          bool
+	err                                                error
 }
 
 func (o *Organizer) ReconcileScan(root string) (ReconcileReport, error) {
