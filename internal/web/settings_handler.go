@@ -7,36 +7,38 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/souten-yd/docExtractor/internal/diagnostics"
 	appsettings "github.com/souten-yd/docExtractor/internal/settings"
 )
 
-type settingsRequest struct { Root string `json:"root"`; OutputRoot string `json:"output_root"`; CollisionPolicy string `json:"collision_policy"` }
+type settingsRequest struct { Root string `json:"root"`; OutputRoot string `json:"output_root"`; OutputMode string `json:"output_mode"`; CollisionPolicy string `json:"collision_policy"` }
 type directoryEntry struct { Name string `json:"name"`; Path string `json:"path"` }
 type directoryResponse struct { Path string `json:"path"`; Parent string `json:"parent,omitempty"`; Entries []directoryEntry `json:"entries"` }
 
 func (s *Server) getSettings(w http.ResponseWriter,r *http.Request){
-	aliases:=map[string]string{}
+	aliases:=map[string]string{};mode:=appsettings.OutputModeInput
 	if s.Settings!=nil{
-		current:=s.Settings.Get();aliases=current.SeriesAliases
-		if current.OutputRoot!=""{_ = s.Organizer.SetOutputRoot(current.OutputRoot)}
-		s.Organizer.SetCollisionPolicy(current.CollisionPolicy)
+		current:=s.Settings.Get();aliases=current.SeriesAliases;mode=current.OutputMode
 	}
-	writeJSON(w,appsettings.Settings{Root:s.Organizer.Root(),OutputRoot:s.Organizer.OutputRoot(),CollisionPolicy:s.Organizer.CollisionPolicy(),SeriesAliases:aliases})
+	writeJSON(w,appsettings.Settings{Root:s.Organizer.Root(),OutputRoot:s.Organizer.OutputRoot(),OutputMode:mode,CollisionPolicy:s.Organizer.CollisionPolicy(),SeriesAliases:aliases})
 }
 func (s *Server) updateSettings(w http.ResponseWriter,r *http.Request){
 	if s.Settings==nil{http.Error(w,"settings store unavailable",http.StatusServiceUnavailable);return}
 	r.Body=http.MaxBytesReader(w,r.Body,16*1024);var req settingsRequest;dec:=json.NewDecoder(r.Body);dec.DisallowUnknownFields();if err:=dec.Decode(&req);err!=nil{http.Error(w,"invalid request",http.StatusBadRequest);return}
 	root:=strings.TrimSpace(req.Root);if root==""{http.Error(w,"root is required",http.StatusBadRequest);return};root=filepath.Clean(root);if !filepath.IsAbs(root)||!withinPath(s.browseBase(),root){http.Error(w,"root must be an absolute path inside the allowed share root",http.StatusBadRequest);return}
-	outputRoot:=strings.TrimSpace(req.OutputRoot);if outputRoot==""{outputRoot=root};outputRoot=filepath.Clean(outputRoot);if !filepath.IsAbs(outputRoot)||!withinPath(s.browseBase(),outputRoot){http.Error(w,"output root must be an absolute path inside the allowed share root",http.StatusBadRequest);return}
+	outputMode:=req.OutputMode;if outputMode==""{if strings.TrimSpace(req.OutputRoot)==""{outputMode=appsettings.OutputModeInput}else{outputMode=appsettings.OutputModeCustom}};if outputMode!=appsettings.OutputModeCustom{outputMode=appsettings.OutputModeInput}
+	outputRoot:=strings.TrimSpace(req.OutputRoot);if outputMode==appsettings.OutputModeInput{outputRoot=root}else if outputRoot==""{http.Error(w,"output root is required when a separate output folder is selected",http.StatusBadRequest);return};outputRoot=filepath.Clean(outputRoot);if !filepath.IsAbs(outputRoot)||!withinPath(s.browseBase(),outputRoot){http.Error(w,"output root must be an absolute path inside the allowed share root",http.StatusBadRequest);return}
 	if req.CollisionPolicy!="overwrite"{req.CollisionPolicy="skip"}
+	st:=s.archiveScanState();st.mu.Lock();defer st.mu.Unlock();if st.Running{http.Error(w,"archive scan is running; wait for it to finish before changing folders",http.StatusConflict);return}
 	oldRoot,oldOutput,oldPolicy:=s.Organizer.Root(),s.Organizer.OutputRoot(),s.Organizer.CollisionPolicy()
 	if err:=s.Organizer.SetRoot(root);err!=nil{http.Error(w,err.Error(),http.StatusBadRequest);return}
 	if err:=s.Organizer.SetOutputRoot(outputRoot);err!=nil{_ = s.Organizer.SetRoot(oldRoot);http.Error(w,err.Error(),http.StatusBadRequest);return}
 	s.Organizer.SetCollisionPolicy(req.CollisionPolicy)
-	current:=s.Settings.Get();current.Root=s.Organizer.Root();current.OutputRoot=s.Organizer.OutputRoot();current.CollisionPolicy=s.Organizer.CollisionPolicy()
+	current:=s.Settings.Get();current.Root=s.Organizer.Root();current.OutputRoot=s.Organizer.OutputRoot();current.OutputMode=outputMode;current.CollisionPolicy=s.Organizer.CollisionPolicy()
 	if err:=s.Settings.Save(current);err!=nil{_ = s.Organizer.SetRoot(oldRoot);_ = s.Organizer.SetOutputRoot(oldOutput);s.Organizer.SetCollisionPolicy(oldPolicy);http.Error(w,"failed to persist settings",http.StatusInternalServerError);return}
+	st.Phase="idle";st.Completed=0;st.Total=0;st.Current="";st.Message="設定が変更されました。スキャンを実行してください";st.Error="";st.StartedAt=time.Time{};st.FinishedAt=time.Time{};st.ElapsedMS=0;st.ItemsPerSecond=0;st.Plans=nil
 	if s.Diagnostics!=nil{if logger,err:=s.Diagnostics.Job("system");err==nil{_ = logger.Write(diagnostics.Event{Component:"settings",Stage:"save",Message:"archive paths changed",Fields:map[string]any{"old_input_path":oldRoot,"new_input_path":s.Organizer.Root(),"old_output_path":oldOutput,"new_output_path":s.Organizer.OutputRoot(),"collision_policy":s.Organizer.CollisionPolicy()}})}}
 	writeJSON(w,current)
 }

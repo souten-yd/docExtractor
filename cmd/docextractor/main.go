@@ -45,13 +45,14 @@ func main() {
 
 	diag, err := diagnostics.New(diagnostics.Config{RootDir:filepath.Join(*dataDir,"diagnostics"),RetentionDays:14,PrivacyMode:true}); if err!=nil{log.Fatal(err)}
 	loadedSettings:=settingStore.Get(); effectiveRoot:=loadedSettings.Root
-	org, err := organizer.New(organizer.Config{Root:effectiveRoot,ConfidenceThreshold:0.72,Aliases:loadedSettings.SeriesAliases})
+	org, err := organizer.New(organizer.Config{Root:effectiveRoot,OutputRoot:effectiveRoot,CollisionPolicy:loadedSettings.CollisionPolicy,ConfidenceThreshold:0.72,Aliases:loadedSettings.SeriesAliases})
 	if err!=nil && filepath.Clean(effectiveRoot)!=filepath.Clean(*root){
 		log.Printf("saved root unavailable (%s); falling back to default: %v",effectiveRoot,err)
-		org,err=organizer.New(organizer.Config{Root:*root,ConfidenceThreshold:0.72,Aliases:loadedSettings.SeriesAliases})
-		if err==nil{settingStore=appsettings.New(settingsPath,appsettings.Settings{Root:org.Root(),SeriesAliases:loadedSettings.SeriesAliases})}
+		org,err=organizer.New(organizer.Config{Root:*root,OutputRoot:*root,CollisionPolicy:loadedSettings.CollisionPolicy,ConfidenceThreshold:0.72,Aliases:loadedSettings.SeriesAliases})
+		if err==nil{settingStore=appsettings.New(settingsPath,appsettings.Settings{Root:org.Root(),OutputMode:appsettings.OutputModeInput,SeriesAliases:loadedSettings.SeriesAliases});loadedSettings=settingStore.Get()}
 	}
 	if err!=nil{log.Fatal(err)}
+	if loadedSettings.OutputMode==appsettings.OutputModeCustom{if outputErr:=org.SetOutputRoot(loadedSettings.OutputRoot);outputErr!=nil{log.Printf("saved output root unavailable (%s); using scan root: %v",loadedSettings.OutputRoot,outputErr);loadedSettings.Root=org.Root();loadedSettings.OutputRoot=org.Root();loadedSettings.OutputMode=appsettings.OutputModeInput;if saveErr:=settingStore.Save(loadedSettings);saveErr!=nil{log.Printf("failed to persist output root fallback: %v",saveErr)}}}
 	verify:=archive.VerifyCentral;if *fullVerify{verify=archive.VerifyFull}
 	processor:=archive.New(archive.Config{BufferSize:*bufferMiB*1024*1024,MaxDictionarySize:*maxDictMiB*1024*1024,Compression:archive.CompressionMode(*compression),Verify:verify})
 

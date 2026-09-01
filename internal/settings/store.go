@@ -12,11 +12,14 @@ import (
 const (
 	CollisionSkip      = "skip"
 	CollisionOverwrite = "overwrite"
+	OutputModeInput    = "input"
+	OutputModeCustom   = "custom"
 )
 
 type Settings struct {
 	Root            string            `json:"root"`
 	OutputRoot      string            `json:"output_root"`
+	OutputMode      string            `json:"output_mode"`
 	CollisionPolicy string            `json:"collision_policy"`
 	SeriesAliases   map[string]string `json:"series_aliases,omitempty"`
 }
@@ -29,7 +32,7 @@ type Store struct {
 
 func normalizeSettings(in Settings) Settings {
 	in.Root = filepath.Clean(strings.TrimSpace(in.Root))
-	if strings.TrimSpace(in.OutputRoot) == "" { in.OutputRoot = in.Root } else { in.OutputRoot = filepath.Clean(strings.TrimSpace(in.OutputRoot)) }
+	if in.OutputMode == OutputModeCustom && strings.TrimSpace(in.OutputRoot) != "" { in.OutputRoot = filepath.Clean(strings.TrimSpace(in.OutputRoot)) } else { in.OutputMode = OutputModeInput; in.OutputRoot = in.Root }
 	if in.CollisionPolicy != CollisionOverwrite { in.CollisionPolicy = CollisionSkip }
 	in.SeriesAliases = cloneAliases(in.SeriesAliases)
 	return in
@@ -37,6 +40,7 @@ func normalizeSettings(in Settings) Settings {
 
 func Open(path string, defaults Settings) (*Store, error) {
 	defaults = normalizeSettings(defaults)
+	defaultRoot := defaults.Root
 	s := &Store{path: filepath.Clean(path), current: defaults}
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) { return s, nil }
@@ -44,10 +48,13 @@ func Open(path string, defaults Settings) (*Store, error) {
 	var loaded Settings
 	if err := json.Unmarshal(data, &loaded); err != nil { return nil, err }
 	if strings.TrimSpace(loaded.Root) != "" { s.current.Root = filepath.Clean(strings.TrimSpace(loaded.Root)) }
-	if strings.TrimSpace(loaded.OutputRoot) != "" { s.current.OutputRoot = filepath.Clean(strings.TrimSpace(loaded.OutputRoot)) } else { s.current.OutputRoot = s.current.Root }
+	if loaded.OutputMode == OutputModeCustom { s.current.OutputMode=OutputModeCustom;s.current.OutputRoot=filepath.Clean(strings.TrimSpace(loaded.OutputRoot))
+	} else if loaded.OutputMode == OutputModeInput { s.current.OutputMode=OutputModeInput;s.current.OutputRoot=s.current.Root
+	} else if strings.TrimSpace(loaded.OutputRoot)!=""&&filepath.Clean(strings.TrimSpace(loaded.OutputRoot))!=s.current.Root&&filepath.Clean(strings.TrimSpace(loaded.OutputRoot))!=defaultRoot { s.current.OutputMode=OutputModeCustom;s.current.OutputRoot=filepath.Clean(strings.TrimSpace(loaded.OutputRoot))
+	} else { s.current.OutputMode=OutputModeInput;s.current.OutputRoot=s.current.Root }
 	if loaded.CollisionPolicy == CollisionOverwrite { s.current.CollisionPolicy = CollisionOverwrite } else { s.current.CollisionPolicy = CollisionSkip }
 	if loaded.SeriesAliases != nil { s.current.SeriesAliases = cloneAliases(loaded.SeriesAliases) }
-	return s, nil
+	s.current=normalizeSettings(s.current);return s, nil
 }
 
 func New(path string, current Settings) *Store { return &Store{path: filepath.Clean(path), current: normalizeSettings(current)} }
