@@ -58,12 +58,18 @@ func TestSettingsPersistAndFolderBrowser(t *testing.T) {
 	if got := org.Root(); got != next {
 		t.Fatalf("organizer root=%q want=%q", got, next)
 	}
+	if got := org.OutputRoot(); got != next {
+		t.Fatalf("organizer output root=%q want input root=%q", got, next)
+	}
 	reloaded, err := appsettings.Open(storePath, appsettings.Settings{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := reloaded.Get().Root; got != next {
 		t.Fatalf("persisted root=%q want=%q", got, next)
+	}
+	if got := reloaded.Get(); got.OutputMode != appsettings.OutputModeInput || got.OutputRoot != next {
+		t.Fatalf("persisted input output mode did not follow root: %+v", got)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/directories?path="+next, nil)
@@ -78,6 +84,49 @@ func TestSettingsPersistAndFolderBrowser(t *testing.T) {
 	}
 	if len(listing.Entries) != 1 || listing.Entries[0].Path != child {
 		t.Fatalf("unexpected listing: %+v", listing)
+	}
+}
+
+func TestSettingsCustomOutputAndScanCacheInvalidation(t *testing.T) {
+	browseRoot := t.TempDir()
+	input := filepath.Join(browseRoot, "Incoming")
+	output := filepath.Join(browseRoot, "Manga")
+	for _, dir := range []string{input, output} {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := appsettings.New(filepath.Join(t.TempDir(), "settings.json"), appsettings.Settings{Root: input})
+	org, err := organizer.New(organizer.Config{Root: input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jm, err := jobs.New(1, 2, func(context.Context, string, jobs.Task, func(jobs.Update)) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer jm.Close()
+	s := &Server{Organizer: org, Jobs: jm, Settings: store, BrowseRoot: browseRoot}
+	defer archiveScanStates.Delete(s)
+	st := s.archiveScanState()
+	st.Phase = "done"
+	st.Plans = []organizer.Plan{{Name: "old-from-temp.zip"}}
+	h := s.Handler()
+
+	body, _ := json.Marshal(map[string]string{"root": input, "output_mode": appsettings.OutputModeCustom, "output_root": output})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("settings update status=%d body=%s", res.Code, res.Body.String())
+	}
+	if org.OutputRoot() != output {
+		t.Fatalf("custom output=%q want=%q", org.OutputRoot(), output)
+	}
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	if st.Phase != "idle" || len(st.Plans) != 0 {
+		t.Fatalf("old scan result was retained: phase=%q plans=%+v", st.Phase, st.Plans)
 	}
 }
 

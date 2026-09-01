@@ -15,7 +15,7 @@ const archiveScanUIScript = `<script>
   async function getStatus(){return api('api/scan?op=status',{method:'POST'})}
   async function loadItems(){var ps=await api('api/scan?op=items',{method:'POST'});if(window.renderArchivePlans)window.renderArchivePlans(ps)}
   async function poll(){if(polling)return;polling=true;try{while(true){var s=await getStatus();render(s);if(!s.running){if(s.phase==='done')await loadItems();break}await new Promise(function(r){setTimeout(r,800)})}}catch(e){ensureProgress();document.getElementById('archiveScanError').textContent='状態取得失敗: '+e.message}finally{polling=false}}
-  window.scan=async function(){ensureProgress();try{var s=await api('api/scan?op=start',{method:'POST'});render(s);await poll()}catch(e){document.getElementById('archiveScanError').textContent='スキャン開始失敗: '+e.message}};
+  window.scan=async function(){ensureProgress();try{if(window.ensureArchiveSettingsSaved)await window.ensureArchiveSettingsSaved();var s=await api('api/scan?op=start',{method:'POST'});render(s);await poll()}catch(e){document.getElementById('archiveScanError').textContent='スキャン開始失敗: '+e.message}};
   ensureProgress();
   setTimeout(async function(){try{var s=await getStatus();render(s);if(s.running)await poll();else if(s.phase==='done')await loadItems()}catch(e){}},0);
 })();
