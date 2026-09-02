@@ -32,6 +32,7 @@ func (s *Server) validReconcileRequest(w http.ResponseWriter,r *http.Request)(re
 	req.Roots=clean
 	if strings.TrimSpace(req.OutputRoot)==""{req.OutputRoot=req.Roots[0]}
 	req.OutputRoot=filepath.Clean(strings.TrimSpace(req.OutputRoot));if req.OutputRoot=="."||!filepath.IsAbs(req.OutputRoot)||!withinPath(s.browseBase(),req.OutputRoot){http.Error(w,"output_root must be inside the allowed share root",http.StatusBadRequest);return req,false}
+	if _,ok:=seen[req.OutputRoot];!ok{req.Roots=append(req.Roots,req.OutputRoot);seen[req.OutputRoot]=struct{}{}}
 	for id,path:=range req.Selections{path=filepath.Clean(strings.TrimSpace(path));if id==""||path=="."||!filepath.IsAbs(path){delete(req.Selections,id);continue};allowed:=false;for _,root:=range req.Roots{if withinPath(root,path){allowed=true;break}};if !allowed{http.Error(w,"selection source must be inside a selected library root",http.StatusBadRequest);return req,false};req.Selections[id]=path}
 	return req,true
 }

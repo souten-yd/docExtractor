@@ -125,6 +125,9 @@ func normalizeReconcileRoots(roots []string, outputRoot string) ([]string, strin
 	if err != nil {
 		return nil, "", fmt.Errorf("output root: %w", err)
 	}
+	if _, ok := seen[nOut]; !ok {
+		out = append(out, nOut)
+	}
 	return out, nOut, nil
 }
 
