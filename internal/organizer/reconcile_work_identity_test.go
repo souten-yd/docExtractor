@@ -122,6 +122,55 @@ func TestReconcileKeepsColorEditionsInSameFolderButSeparate(t *testing.T) {
 	}
 }
 
+func TestReconcileTreatsBilingualTitleAsSameWorkButKeepsUnmarkedDerivative(t *testing.T) {
+	root := t.TempDir()
+	folder := "BLACK LAGOON ブラック・ラグーン"
+	english := filepath.Join(root, folder, "[広江礼威] BLACK LAGOON 第01巻.zip")
+	bilingual := filepath.Join(root, folder, "[広江礼威] BLACK LAGOON ブラック・ラグーン 第01巻.zip")
+	bilingualSecond := filepath.Join(root, folder, "[広江礼威] BLACK LAGOON ブラック・ラグーン 第02巻.zip")
+	// Keep the creator identical on purpose: the subtitle itself must remain a
+	// separate work even when author metadata cannot disambiguate it.
+	derivative := filepath.Join(root, folder, "[広江礼威] BLACK LAGOON エダ イニシャルステージ 第01巻.zip")
+	writeTestComicZIP(t, english, "english")
+	writeTestComicZIP(t, bilingual, "bilingual")
+	writeTestComicZIP(t, bilingualSecond, "bilingual-second")
+	writeTestComicZIP(t, derivative, "derivative")
+	now := time.Now()
+	if err := os.Chtimes(english, now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(bilingual, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(derivative, now.Add(time.Hour), now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	o, err := New(Config{Root: root, OutputRoot: root, ConfidenceThreshold: .72})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := o.ReconcileScan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Summary.Superseded != 1 || report.Summary.Review != 0 {
+		t.Fatalf("title alias was not reconciled safely: summary=%#v items=%#v", report.Summary, report.Items)
+	}
+	for _, item := range report.Items {
+		switch filepath.Clean(item.Source) {
+		case filepath.Clean(english):
+			if item.Action != "superseded" {
+				t.Fatalf("older English alias action=%q want superseded: %#v", item.Action, item)
+			}
+		case filepath.Clean(bilingual), filepath.Clean(bilingualSecond), filepath.Clean(derivative):
+			if item.Action == "superseded" || item.Action == "duplicate" || item.Action == "review" {
+				t.Fatalf("selected main/derivative was treated as a competing copy: %#v", item)
+			}
+		}
+	}
+}
+
 func TestReconcileRestoresWronglyQuarantinedDerivativeCollision(t *testing.T) {
 	root := t.TempDir()
 	folder := "陰の実力者になりたくて！"
