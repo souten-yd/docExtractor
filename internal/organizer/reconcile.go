@@ -18,6 +18,7 @@ type ReconcileItem struct {
 	Relative     string    `json:"relative"`
 	Series       string    `json:"series"`
 	WorkSeries   string    `json:"work_series,omitempty"`
+	Author       string    `json:"author,omitempty"`
 	Edition      string    `json:"edition,omitempty"`
 	Destination  string    `json:"destination"`
 	Action       string    `json:"action"`
@@ -30,6 +31,7 @@ type ReconcileItem struct {
 	HasVolume    bool      `json:"has_volume"`
 	ReviewGroup  string    `json:"review_group,omitempty"`
 	AutoSelected bool      `json:"auto_selected,omitempty"`
+	workKey      string
 }
 
 type ReconcileChoice struct {
@@ -69,13 +71,13 @@ type ReconcileResult struct {
 }
 
 type reconcileRaw struct {
-	path, root, rel, name, series, workSeries, edition string
-	confidence                                         float64
-	size                                               int64
-	modified                                           time.Time
-	volume                                             int
-	hasVolume                                          bool
-	err                                                error
+	path, root, rel, name, series, workSeries, author, edition string
+	confidence                                                 float64
+	size                                                       int64
+	modified                                                   time.Time
+	volume                                                     int
+	hasVolume                                                  bool
+	err                                                        error
 }
 
 func (o *Organizer) ReconcileScan(root string) (ReconcileReport, error) {
