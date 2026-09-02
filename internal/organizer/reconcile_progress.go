@@ -138,7 +138,7 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 				workSeries = series
 			}
 			raws = append(raws, reconcileRaw{
-				path: path, root: root, rel: rel, name: d.Name(), series: series, workSeries: workSeries, edition: edition,
+				path: path, root: root, rel: rel, name: d.Name(), series: series, workSeries: workSeries, author: n.Parsed.Author, edition: edition,
 				confidence: confidence, size: st.Size(), modified: st.ModTime(),
 				volume: n.Parsed.Volume, hasVolume: n.Parsed.HasVolume,
 			})
@@ -165,7 +165,7 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 	items := make([]ReconcileItem, len(raws))
 	for i, r := range raws {
 		it := ReconcileItem{
-			Source: r.path, LibraryRoot: r.root, Relative: r.rel, Series: plans[i].Series, WorkSeries: r.workSeries, Edition: r.edition,
+			Source: r.path, LibraryRoot: r.root, Relative: r.rel, Series: plans[i].Series, WorkSeries: r.workSeries, Author: r.author, Edition: r.edition,
 			Confidence: r.confidence, Size: r.size, ModifiedAt: r.modified,
 			Volume: r.volume, HasVolume: r.hasVolume,
 		}
@@ -190,6 +190,7 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 		}
 		items[i] = it
 	}
+	assignReconcileWorkKeys(items)
 
 	emitReconcileProgress(cb, "duplicates", 0, total, "同サイズ候補だけSHA-256を確認中")
 	markExactDuplicatesProgress(outputRoot, items, cb, total)
@@ -384,7 +385,137 @@ func reconcileWorkKey(it ReconcileItem) string {
 	if edition == "" {
 		edition = "standard"
 	}
-	return canonicalKey(reconcileWorkSeries(it)) + "#edition:" + edition
+	work := it.workKey
+	if work == "" {
+		work = canonicalKey(reconcileWorkSeries(it))
+	}
+	return work + "#edition:" + edition
+}
+
+// assignReconcileWorkKeys merges spelling aliases used for one work without
+// collapsing a parent title and its derivative. Folder clustering is broader
+// on purpose (related works share one folder), while same-volume selection must
+// use this narrower identity. A non-exact alias therefore requires the same
+// creator annotation as well as a safe bilingual/minor-title match.
+func assignReconcileWorkKeys(items []ReconcileItem) {
+	parent := make([]int, len(items))
+	for i := range parent {
+		parent[i] = i
+	}
+	var find func(int) int
+	find = func(i int) int {
+		if parent[i] != i {
+			parent[i] = find(parent[i])
+		}
+		return parent[i]
+	}
+	union := func(a, b int) {
+		ra, rb := find(a), find(b)
+		if ra != rb {
+			parent[rb] = ra
+		}
+	}
+
+	seriesGroups := make(map[string][]int)
+	for i := range items {
+		if seriesNameUsable(reconcileWorkSeries(items[i])) {
+			seriesGroups[canonicalKey(items[i].Series)] = append(seriesGroups[canonicalKey(items[i].Series)], i)
+		}
+	}
+	for _, idxs := range seriesGroups {
+		for pos, i := range idxs {
+			for _, j := range idxs[pos+1:] {
+				if sameReconcileWork(items[i], items[j]) {
+					union(i, j)
+				}
+			}
+		}
+	}
+
+	keys := make(map[int]string, len(items))
+	for i := range items {
+		root := find(i)
+		candidate := canonicalKey(reconcileWorkSeries(items[i]))
+		if candidate == "" {
+			continue
+		}
+		if current := keys[root]; current == "" || candidate < current {
+			keys[root] = candidate
+		}
+	}
+	for i := range items {
+		items[i].workKey = keys[find(i)]
+	}
+}
+
+func sameReconcileWork(a, b ReconcileItem) bool {
+	aw, bw := reconcileWorkSeries(a), reconcileWorkSeries(b)
+	ka, kb := canonicalKey(aw), canonicalKey(bw)
+	if ka == "" || kb == "" {
+		return false
+	}
+	if ka == kb {
+		return true
+	}
+	if !sameAuthorIdentity(a.Author, b.Author) {
+		return false
+	}
+	// The clustered folder name is the family anchor. Only aliases that both
+	// agree with that anchor may compete. This prevents a prefix title such as
+	// "BLACK LAGOON" from absorbing an unmarked subtitle/spin-off merely because
+	// the creator text happens to match.
+	if !reconcileWorkAliasOfSeries(aw, a.Series) || !reconcileWorkAliasOfSeries(bw, b.Series) {
+		return false
+	}
+	if hasSpinOffMarker(aw) != hasSpinOffMarker(bw) {
+		return false
+	}
+	if bilingualEquivalent(aw, bw) {
+		return true
+	}
+	if hasSpinOffMarker(aw) || hasSpinOffMarker(bw) {
+		return false
+	}
+	la, lb := len([]rune(ka)), len([]rune(kb))
+	score := levenshteinSimilarity([]rune(ka), []rune(kb))
+	return (la >= 10 && lb >= 10 && score >= .90) || (la >= 8 && lb >= 8 && score >= .94)
+}
+
+func reconcileWorkAliasOfSeries(work, series string) bool {
+	wk, sk := canonicalKey(work), canonicalKey(series)
+	if wk == "" || sk == "" {
+		return false
+	}
+	if wk == sk {
+		return true
+	}
+	if hasSpinOffMarker(work) != hasSpinOffMarker(series) {
+		return false
+	}
+	// A bilingual expansion is safe only when the chosen family name is the
+	// richer form. The reverse direction is ambiguous with an appended subtitle.
+	if len([]rune(sk)) > len([]rune(wk)) && bilingualEquivalent(work, series) {
+		return true
+	}
+	if hasSpinOffMarker(work) || hasSpinOffMarker(series) {
+		return false
+	}
+	lw, ls := len([]rune(wk)), len([]rune(sk))
+	score := levenshteinSimilarity([]rune(wk), []rune(sk))
+	return (lw >= 10 && ls >= 10 && score >= .90) || (lw >= 8 && ls >= 8 && score >= .94)
+}
+
+func sameAuthorIdentity(a, b string) bool {
+	aKeys, bKeys := authorTokenSet(a), authorTokenSet(b)
+	if len(aKeys) == 0 || len(aKeys) != len(bKeys) {
+		return false
+	}
+	for key := range aKeys {
+		if _, ok := bKeys[key]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func reconcileEdition(filename string) string {
