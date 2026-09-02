@@ -80,6 +80,7 @@ func (s *Server) validateAsyncRequest(req *asyncReconcileRequest) error {
 	if strings.TrimSpace(req.OutputRoot) == "" { req.OutputRoot = req.Roots[0] }
 	req.OutputRoot = filepath.Clean(strings.TrimSpace(req.OutputRoot))
 	if req.OutputRoot == "." || !filepath.IsAbs(req.OutputRoot) || !withinPath(s.browseBase(), req.OutputRoot) { return fmt.Errorf("output_root must be inside the allowed share root") }
+	if _, ok := seen[req.OutputRoot]; !ok { req.Roots = append(req.Roots, req.OutputRoot) }
 	return nil
 }
 

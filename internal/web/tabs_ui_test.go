@@ -22,3 +22,19 @@ func TestTabbedModesAndInlineBrowserSlotsAreEmbedded(t *testing.T) {
 		}
 	}
 }
+
+func TestManageItemsUseTheirOwnTimeFormatter(t *testing.T) {
+	html := renderIndexHTML()
+	if !strings.Contains(html, "function fmtManageTime") || !strings.Contains(html, "fmtManageTime(x.modified_at)") {
+		t.Fatal("manage result renderer is missing its scoped time formatter")
+	}
+	if strings.Contains(html, "fmtTime?fmtTime") {
+		t.Fatal("manage result renderer still references the formatter from another script scope")
+	}
+}
+
+func TestManageUIExplainsOutputLibraryComparison(t *testing.T) {
+	if html := renderIndexHTML(); !strings.Contains(html, "既存ファイルも比較対象として自動解析します") {
+		t.Fatal("manage UI does not explain that the existing output library is scanned")
+	}
+}

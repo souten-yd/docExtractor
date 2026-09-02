@@ -41,6 +41,7 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 	}
 
 	total := 0
+	counted := map[string]struct{}{}
 	emitReconcileProgress(cb, "counting", 0, 0, "対象ファイル数を確認中")
 	for _, root := range roots {
 		err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
@@ -60,6 +61,11 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 				return nil
 			}
 			if isReconcileArchiveName(d.Name()) {
+				clean := filepath.Clean(path)
+				if _, ok := counted[clean]; ok {
+					return nil
+				}
+				counted[clean] = struct{}{}
 				total++
 			}
 			return nil
@@ -77,6 +83,7 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 
 	raws := make([]reconcileRaw, 0, total)
 	done := 0
+	inspected := map[string]struct{}{}
 	for _, root := range roots {
 		err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
@@ -98,6 +105,11 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 			if !isReconcileArchiveName(d.Name()) {
 				return nil
 			}
+			clean := filepath.Clean(path)
+			if _, ok := inspected[clean]; ok {
+				return nil
+			}
+			inspected[clean] = struct{}{}
 
 			st, statErr := os.Lstat(path)
 			if statErr != nil {
