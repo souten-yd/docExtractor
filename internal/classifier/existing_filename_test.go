@@ -2,7 +2,7 @@ package classifier
 
 import "testing"
 
-func TestParseExistingFilenameKeepsV0211VolumeBehavior(t *testing.T) {
+func TestParseExistingFilenameVolumeBehavior(t *testing.T) {
 	cases := []struct {
 		name      string
 		series    string
@@ -10,9 +10,9 @@ func TestParseExistingFilenameKeepsV0211VolumeBehavior(t *testing.T) {
 		hasVolume bool
 	}{
 		{"[作者] 作品名 第05巻.zip", "作品名", 5, true},
-		// Deliberately preserve v0.2.11 behavior for ambiguous legacy suffixes.
-		{"Kurasu Teni de ore Dake Haburareta v06s.zip", "Kurasu Teni de ore Dake Haburareta v06s", 0, false},
-		{"異世界転移した俺は、Ｈのたびにガチャを引く！ 第01-02巻s.zip", "異世界転移した俺は、Ｈのたびにガチャを引く！ 第01-02巻s", 0, false},
+		// Recognized volume suffixes/ranges must not become series folders.
+		{"Kurasu Teni de ore Dake Haburareta v06s.zip", "Kurasu Teni de ore Dake Haburareta", 6, true},
+		{"異世界転移した俺は、Ｈのたびにガチャを引く！ 第01-02巻s.zip", "異世界転移した俺は、Ｈのたびにガチャを引く！", 0, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,5 +77,18 @@ func TestParseExistingFilenameHandlesNestedAuthorParentheses(t *testing.T) {
 	got := ParseExistingFilename("[盧恩＆雪笠(Friendly Land)×早秋] 塔の管理をしてみよう 第02巻.zip")
 	if got.Series != "塔の管理をしてみよう" || !got.HasVolume || got.Volume != 2 {
 		t.Fatalf("unexpected parse: %+v", got)
+	}
+}
+
+func TestExistingRangeAndVolumeLetterSuffix(t *testing.T) {
+	for _, name := range []string{"[作者] 作品名 第01-02巻s.zip", "[作者] 作品名 v01-02.zip", "[作者] 作品名 第０１～０２巻.zip"} {
+		got := ParseExistingFilename(name)
+		if got.Series != "作品名" || got.HasVolume {
+			t.Fatalf("range parsed as title/single volume: %q %+v", name, got)
+		}
+	}
+	got := ParseExistingFilename("[作者] 作品名 v03w.zip")
+	if got.Series != "作品名" || !got.HasVolume || got.Volume != 3 {
+		t.Fatalf("suffix: %+v", got)
 	}
 }

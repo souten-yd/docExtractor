@@ -55,7 +55,7 @@ func betterSeriesDisplay(a, b string) bool {
 	}
 	aj, bj := containsJapaneseText(a), containsJapaneseText(b)
 	if aj != bj { return aj }
-	return false
+	return displayPreference(a, b)
 }
 
 func displayPreference(a, b string) bool {
@@ -64,3 +64,4 @@ func displayPreference(a, b string) bool {
 	ar, br := len([]rune(a)), len([]rune(b)); if ar != br { return ar < br }
 	return strings.ToLower(a) < strings.ToLower(b)
 }
+

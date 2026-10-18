@@ -38,10 +38,11 @@ func parentSeriesEvidence(root, path, inferred string, confidence, _ float64) (s
 		return inferred, confidence
 	}
 	if seriesNameUsable(inferred) {
-		if score, _ := sameSeries(inferred, parent); score >= .90 {
+		if score, _ := sameSeries(inferred, parent); score >= .90 || prefixSubtitleEquivalentPrepared(prepareSeries(inferred), prepareSeries(parent)) {
 			if richerSeries(parent, inferred) {
 				inferred = parent
 			}
+			inferred = withSeriesRating(inferred, parent)
 			if confidence < .90 {
 				confidence = .90
 			}
@@ -50,3 +51,4 @@ func parentSeriesEvidence(root, path, inferred string, confidence, _ float64) (s
 	}
 	return parent, .78
 }
+

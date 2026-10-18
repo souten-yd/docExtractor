@@ -14,7 +14,11 @@ type ClusterInfo struct {
 
 func clusterPlans(plans []Plan, persisted map[string]string) []Plan { return clusterPlansProgress(plans,persisted,nil) }
 
-func aliasLookup(aliases map[string]string,s string)(string,bool){key:=canonicalKey(s);for a,c:=range aliases{if canonicalKey(a)==key{return c,true}};return "",false}
+func aliasLookup(aliases map[string]string, s string) (string, bool) {
+ c, ok := buildAliasIndex(aliases)[canonicalKey(s)]
+ if ok { c = withSeriesRating(c, s) }
+ return c, ok
+}
 
 func chooseCanonical(plans []Plan,idxs []int,persisted map[string]string)string{for _,idx:=range idxs{if c,ok:=aliasLookup(persisted,plans[idx].Series);ok&&seriesNameUsable(c){return c}};counts:=map[string]int{};for _,idx:=range idxs{if seriesNameUsable(plans[idx].Series){counts[canonicalKey(plans[idx].Series)]++}};best:="";bestCount:=-1;for _,idx:=range idxs{cand:=plans[idx].Series;if !seriesNameUsable(cand){continue};count:=counts[canonicalKey(cand)];if best==""||count>bestCount||(count==bestCount&&betterSeriesDisplay(cand,best)){best,bestCount=cand,count}};return best}
 
@@ -40,7 +44,7 @@ func sameSeries(a,b string)(float64,string){
 
 func bilingualEquivalent(a,b string)bool{if hasSpinOffMarker(a)||hasSpinOffMarker(b){return false};short,long:=a,b;if len([]rune(canonicalKey(short)))>len([]rune(canonicalKey(long))){short,long=long,short};sk,lk:=canonicalKey(short),canonicalKey(long);if len([]rune(sk))<4||sk==lk{return false};var rest string;switch{case strings.HasPrefix(lk,sk):rest=strings.TrimPrefix(lk,sk);case strings.HasSuffix(lk,sk):rest=strings.TrimSuffix(lk,sk);default:return false};if rest==""{return false};if containsJapaneseText(short)&&!containsLatin(short){return containsLatin(rest)};if containsLatin(short)&&!containsJapaneseText(short){return containsJapaneseText(rest)};return false}
 
-func canonicalKey(s string)string{s=strings.ToLower(strings.TrimSpace(s));s=strings.Map(func(r rune)rune{switch r{case ' ','\t','　','_','-','‐','‑','–','—','・','.','．','·','!','！','?','？',',','，','、','(',')','（','）','[',']','【','】':return -1};if r>='Ａ'&&r<='Ｚ'{return r-'Ａ'+'a'};if r>='ａ'&&r<='ｚ'{return r-'ａ'+'a'};if r>='０'&&r<='９'{return r-'０'+'0'};return r},s);return s}
+func canonicalKey(s string)string{s,_=splitSeriesRating(s);s=strings.ToLower(strings.TrimSpace(s));s=strings.Map(func(r rune)rune{switch r{case ' ','\t','　','_','-','‐','‑','–','—','・','.','．','·','!','！','?','？',',','，','、','(',')','（','）','[',']','【','】':return -1};if r>='Ａ'&&r<='Ｚ'{return r-'Ａ'+'a'};if r>='ａ'&&r<='ｚ'{return r-'ａ'+'a'};if r>='０'&&r<='９'{return r-'０'+'0'};return r},s);return s}
 
 func hasSpinOffMarker(s string)bool{l:=strings.ToLower(s);for _,m:=range []string{"外伝","異聞","異伝","異譚","前日譚","後日譚","列伝","番外","スピンオフ","spin-off","spinoff","side story","another story"}{if strings.Contains(l,m){return true}};return false}
 
@@ -51,3 +55,4 @@ func levenshteinSimilarity(a,b []rune)float64{m,n:=len(a),len(b);if m==0||n==0{r
 
 func replaceSeriesDir(destination,oldSeries,newSeries string)string{if destination==""||oldSeries==newSeries{return destination};dir:=strings.TrimSuffix(destination,"/"+pathBase(destination));if strings.HasSuffix(dir,"/"+oldSeries){return strings.TrimSuffix(dir,oldSeries)+newSeries+"/"+pathBase(destination)};return destination}
 func pathBase(s string)string{if i:=strings.LastIndex(s,"/");i>=0{return s[i+1:]};return s}
+
