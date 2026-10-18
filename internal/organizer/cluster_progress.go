@@ -94,7 +94,18 @@ func sameAuthorNearEquivalentPrepared(a,b preparedSeries)(float64,bool){
 }
 
 func buildAliasIndex(persisted map[string]string) map[string]string {
-	if len(persisted)==0{return nil};out:=make(map[string]string,len(persisted));for alias,canonical:=range persisted{key:=canonicalKey(alias);if key!=""{out[key]=canonical}};return out
+ out := make(map[string]string, len(persisted))
+ names := make([]string, 0, len(persisted))
+ for alias := range persisted { names = append(names, alias) }
+ sort.Strings(names)
+ for _, alias := range names {
+  key := canonicalKey(alias)
+  if key == "" { continue }
+  canonical := withSeriesRating(persisted[alias], alias)
+  if current, ok := out[key]; ok { canonical = withSeriesRating(current, canonical) }
+  out[key] = canonical
+ }
+ return out
 }
 
 func authorTokenSet(s string) map[string]struct{} {
@@ -109,7 +120,8 @@ func authorsOverlap(a,b map[string]struct{})bool{
 	if len(a)==0||len(b)==0{return false};if len(a)>len(b){a,b=b,a};for k:=range a{if _,ok:=b[k];ok{return true}};return false
 }
 
-func chooseCanonicalPrepared(plans []Plan,idxs []int,aliasIndex map[string]string,planKeys []string)string{
+func chooseCanonicalPrepared(plans []Plan,idxs []int,aliasIndex map[string]string,planKeys []string)(result string){
+ defer func(){ for _, idx := range idxs { result = withSeriesRating(result, plans[idx].Series) } }()
 	for _,idx:=range idxs{if c,ok:=aliasIndex[planKeys[idx]];ok&&seriesNameUsable(c){return c}}
 	counts:=make(map[string]int,len(idxs));for _,idx:=range idxs{if seriesNameUsable(plans[idx].Series){counts[planKeys[idx]]++}}
 	best,bestCount:="",-1;for _,idx:=range idxs{cand:=plans[idx].Series;if !seriesNameUsable(cand){continue};count:=counts[planKeys[idx]];if best==""||count>bestCount||(count==bestCount&&betterSeriesDisplay(cand,best)){best,bestCount=cand,count}}
@@ -119,7 +131,7 @@ func chooseCanonicalPrepared(plans []Plan,idxs []int,aliasIndex map[string]strin
 func clusterPlansProgress(plans []Plan,persisted map[string]string,cb ReconcileProgressFunc)[]Plan{
 	if len(plans)<2&&len(persisted)==0{emitReconcileProgress(cb,"clustering",1,1,"シリーズ統合対象なし");return plans}
 	aliasIndex:=buildAliasIndex(persisted)
-	for i:=range plans{if plans[i].Series==""||plans[i].Error!=""||!seriesNameUsable(plans[i].Series){continue};if canonical,ok:=aliasIndex[canonicalKey(plans[i].Series)];ok{plans[i].Cluster=ClusterInfo{Canonical:canonical,Aliases:[]string{plans[i].Series},Reason:"saved alias",Score:1};plans[i].Series=canonical}}
+	for i:=range plans{if plans[i].Series==""||plans[i].Error!=""||!seriesNameUsable(plans[i].Series){continue};if canonical,ok:=aliasIndex[canonicalKey(plans[i].Series)];ok{canonical=withSeriesRating(canonical,plans[i].Series);plans[i].Cluster=ClusterInfo{Canonical:canonical,Aliases:[]string{plans[i].Series},Reason:"saved alias",Score:1};plans[i].Series=withSeriesRating(canonical, plans[i].Series)}}
 
 	unique:=make([]preparedSeries,0);uid:=make(map[string]int);members:=make([][]int,0);authors:=make([]map[string]struct{},0);planKeys:=make([]string,len(plans))
 	for i:=range plans{
@@ -144,3 +156,4 @@ func clusterPlansProgress(plans []Plan,persisted map[string]string,cb ReconcileP
 	for _,idxs:=range groups{if len(idxs)<2{continue};canonical:=chooseCanonicalPrepared(plans,idxs,aliasIndex,planKeys);aliases:=make([]string,0);seen:=make(map[string]struct{},len(idxs));for _,idx:=range idxs{if _,ok:=seen[plans[idx].Series];!ok{seen[plans[idx].Series]=struct{}{};aliases=append(aliases,plans[idx].Series)}};sort.Slice(aliases,func(i,j int)bool{return strings.ToLower(aliases[i])<strings.ToLower(aliases[j])});for _,idx:=range idxs{old:=plans[idx].Series;plans[idx].Series=canonical;plans[idx].Destination=replaceSeriesDir(plans[idx].Destination,old,canonical);plans[idx].Cluster.Canonical=canonical;plans[idx].Cluster.Aliases=aliases;if plans[idx].Cluster.Reason==""{u:=uid[old];if reasons[u]!=""{plans[idx].Cluster.Reason=reasons[u];plans[idx].Cluster.Score=scores[u]}else{plans[idx].Cluster.Reason="series cluster";plans[idx].Cluster.Score=0.95}}}}
 	return plans
 }
+

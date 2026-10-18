@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+ "regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -157,10 +158,10 @@ func (o *Organizer) ReconcileScanMultiProgressWithOptions(roots []string, output
 		if r.err != nil {
 			plans[i] = Plan{Name: r.rel, Error: r.err.Error()}
 		} else {
-			plans[i] = Plan{Name: r.rel, Series: r.series, Confidence: r.confidence}
+			plans[i] = Plan{Name: r.rel, Series: r.series, Author: r.author, Confidence: r.confidence}
 		}
 	}
-	plans = clusterPlans(plans, o.Aliases())
+	plans = clusterPlansProgress(plans, o.Aliases(), cb)
 
 	items := make([]ReconcileItem, len(raws))
 	for i, r := range raws {
@@ -448,6 +449,8 @@ func assignReconcileWorkKeys(items []ReconcileItem) {
 	}
 }
 
+var workNumbers = regexp.MustCompile(`[0-9]+`)
+
 func sameReconcileWork(a, b ReconcileItem) bool {
 	aw, bw := reconcileWorkSeries(a), reconcileWorkSeries(b)
 	ka, kb := canonicalKey(aw), canonicalKey(bw)
@@ -457,6 +460,8 @@ func sameReconcileWork(a, b ReconcileItem) bool {
 	if ka == kb {
 		return true
 	}
+	// Numbered sequels may share a family folder, never the same-volume identity.
+ if strings.Join(workNumbers.FindAllString(ka,-1), ",") != strings.Join(workNumbers.FindAllString(kb,-1), ",") { return false }
 	if !sameAuthorIdentity(a.Author, b.Author) {
 		return false
 	}
@@ -658,3 +663,4 @@ func (o *Organizer) ReconcileExecuteReportProgress(report ReconcileReport, selec
 	emitReconcileProgress(cb, "done", total, total, "整理完了")
 	return result, nil
 }
+
