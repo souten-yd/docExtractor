@@ -59,6 +59,8 @@ jobs:
           from pathlib import Path
 
           expected = {
+              Path('internal/web/static/apple-touch-icon.png'): (180, 180),
+              Path('internal/web/static/favicon.png'): (32, 32),
               Path('qpkg/icons/docExtractor.png'): (64, 64),
               Path('qpkg/icons/docExtractor_80.png'): (80, 80),
               Path('qpkg/icons/docExtractor_gray.png'): (64, 64),

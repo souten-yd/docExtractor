@@ -1,7 +1,9 @@
 package web
 
 import (
+	"bytes"
 	"context"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -35,6 +37,44 @@ func TestQTSProxyPrefixAndDirectRoutes(t *testing.T) {
 	}
 
 	h := (&Server{Organizer: org, Jobs: jm, Diagnostics: dm, Updater: um, Version: "v0.2.0"}).Handler()
+	for _, prefix := range []string{"", "/docExtractor"} {
+		for name, size := range map[string]int{"apple-touch-icon.png": 180, "favicon.png": 32} {
+			target := prefix + "/" + name + "?v=1"
+			res := httptest.NewRecorder()
+			h.ServeHTTP(res, httptest.NewRequest(http.MethodGet, target, nil))
+			if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "image/png" {
+				t.Fatalf("%s: status=%d type=%s", target, res.Code, res.Header().Get("Content-Type"))
+			}
+			cfg, err := png.DecodeConfig(bytes.NewReader(res.Body.Bytes()))
+			if err != nil || cfg.Width != size || cfg.Height != size {
+				t.Fatalf("%s: invalid PNG dimensions: %+v, %v", target, cfg, err)
+			}
+			if res.Header().Get("Cache-Control") != "public, max-age=86400" {
+				t.Fatalf("%s: missing cache policy", target)
+			}
+			res = httptest.NewRecorder()
+			h.ServeHTTP(res, httptest.NewRequest(http.MethodHead, target, nil))
+			if res.Code != http.StatusOK || res.Body.Len() != 0 {
+				t.Fatalf("HEAD %s: status=%d body=%d", target, res.Code, res.Body.Len())
+			}
+		}
+	}
+	for _, target := range []string{"/", "/docExtractor", "/docExtractor/"} {
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, httptest.NewRequest(http.MethodGet, target, nil))
+		for _, marker := range []string{`rel="apple-touch-icon"`, `href="/docExtractor/apple-touch-icon.png?v=1"`, `href="/docExtractor/favicon.png?v=1"`, `name="apple-mobile-web-app-title" content="docExtractor"`} {
+			if !strings.Contains(res.Body.String(), marker) {
+				t.Fatalf("%s: missing icon metadata %s", target, marker)
+			}
+		}
+	}
+	for _, target := range []string{"/static/index.html", "/docExtractor/static/index.html", "/missing-icon.png"} {
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, httptest.NewRequest(http.MethodGet, target, nil))
+		if res.Code != http.StatusNotFound {
+			t.Fatalf("%s: expected 404, got %d", target, res.Code)
+		}
+	}
 	for _, target := range []string{"/", "/docExtractor", "/docExtractor/", "/api/status", "/docExtractor/api/status", "/api/update", "/docExtractor/api/update"} {
 		req := httptest.NewRequest(http.MethodGet, target, nil)
 		res := httptest.NewRecorder()

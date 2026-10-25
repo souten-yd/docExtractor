@@ -130,3 +130,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o docExtractor ./cmd/d
 
 実データで検証する際は必ずバックアップを用意し、最初はコピーしたテストデータを使用してください。
 
+
+## アプリアイコン
+
+iPhoneのホーム画面追加とQNAPのアイコンについては[アプリアイコン](docs/app-icons.md)を参照してください。
